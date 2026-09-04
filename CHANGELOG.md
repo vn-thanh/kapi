@@ -9,22 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Features
 
-* collapse overflowing toolbar controls into a More menu ([8a2b183](https://github.com/vn-thanh/kapi/commit/8a2b18352e818fff931143556e9edde9e167c7df))
-
+* **Toolbar overflow** — when the meeting chrome is too narrow for every control, extras collapse into a ⋯ More menu (mic, camera and leave stay on the bar) ([8a2b183](https://github.com/vn-thanh/kapi/commit/8a2b18352e818fff931143556e9edde9e167c7df))
 
 ### Bug Fixes
 
-* broadcast mic/cam state so remotes see the mute chip ([80fc833](https://github.com/vn-thanh/kapi/commit/80fc8336a7ac3cb7d1a15c72ae2a377256b58cdf))
-
-## [Unreleased]
-
-### Added
-
-- **Toolbar overflow** — when the meeting chrome is too narrow for every control, extras collapse into a ⋯ More menu (mic, camera and leave stay on the bar).
-
-### Fixed
-
-- **Remote mute indicator** — `setMic` / `setCam` now broadcast `media-state` (`mic`, `cam`, `sharing`) so other peers see a mute chip immediately. Inferring mute from the remote audio track's `muted` flag is unreliable (Chrome never fires it for audio). Late joiners get the current snapshot the same way they already learned about an in-progress screen share.
+* **Remote mute indicator** — `setMic` / `setCam` now broadcast `media-state` (`mic`, `cam`, `sharing`) so other peers see a mute chip immediately. Inferring mute from the remote audio track's `muted` flag is unreliable (Chrome never fires it for audio). Late joiners get the current snapshot the same way they already learned about an in-progress screen share ([80fc833](https://github.com/vn-thanh/kapi/commit/80fc8336a7ac3cb7d1a15c72ae2a377256b58cdf))
 
 ## [1.0.0](https://github.com/vn-thanh/kapi/releases/tag/v1.0.0) (2026-09-04)
 
