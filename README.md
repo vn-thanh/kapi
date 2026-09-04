@@ -124,12 +124,7 @@ npm run demo        # build + local demo server
 npm run demo:serve  # serve only (dist must exist)
 ```
 
-## Publish (later)
-
-```bash
-npm login
-npm publish --access public
-```
+## Repository
 
 Repository: https://github.com/vn-thanh/kapi
 
