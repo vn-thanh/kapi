@@ -173,10 +173,14 @@
       nameInput.value = params.get('name') || `User-${crypto.randomUUID().slice(0, 4)}`;
 
       let handle = null;
+      let joining = false;
+      let bannerTimer = null;
 
       function showBanner(text) {
         banner.textContent = text;
         banner.classList.add('show');
+        clearTimeout(bannerTimer);
+        bannerTimer = setTimeout(() => banner.classList.remove('show'), 6000);
       }
 
       /**
@@ -188,6 +192,7 @@
         const handlers = new Set();
         const early = [];
         let closed = false;
+        const abort = new AbortController();
         const signalHeaders = {
           'Content-Type': 'application/json',
           'ngrok-skip-browser-warning': 'true',
@@ -207,6 +212,7 @@
             headers: signalHeaders,
             body: JSON.stringify({ roomId, peerId, message }),
             keepalive: true,
+            signal: abort.signal,
           });
           if (!res.ok) {
             const text = await res.text().catch(() => '');
@@ -220,13 +226,14 @@
             try {
               const res = await fetch(`/kapi-signal?${qs}`, {
                 headers: { 'ngrok-skip-browser-warning': 'true' },
+                signal: abort.signal,
               });
               if (!res.ok) throw new Error(`Signal poll ${res.status}`);
               const data = await res.json();
               for (const msg of data.messages || []) dispatch(msg);
             } catch (err) {
-              if (closed) return;
-              console.error('[kapi demo] poll error', err);
+              if (closed || abort.signal.aborted) return;
+              if (err.name !== 'AbortError') console.error('[kapi demo] poll error', err);
               await new Promise((r) => setTimeout(r, 1000));
             }
           }
@@ -239,9 +246,11 @@
         return {
           ready,
           send(message) {
-            void post(message).catch((err) =>
-              console.error('[kapi demo] signal send failed', err),
-            );
+            if (closed) return;
+            void post(message).catch((err) => {
+              if (err.name === 'AbortError') return;
+              console.error('[kapi demo] signal send failed', err);
+            });
           },
           onMessage(fn) {
             handlers.add(fn);
@@ -253,11 +262,14 @@
           },
           close() {
             closed = true;
+            abort.abort();
           },
         };
       }
 
       async function startCall() {
+        if (joining || handle?.room) return; // double-click / autostart re-entry
+        joining = true;
         const roomId = (roomInput.value || 'kapi-demo').trim();
         const displayName = (nameInput.value || 'Guest').trim();
         const peerId = crypto.randomUUID();
@@ -299,23 +311,35 @@
               handle?.dispose();
               handle = null;
               signal.close();
-              document.body.classList.remove('in-call');
+              clearTimeout(bannerTimer);
               banner.classList.remove('show');
+              document.body.classList.remove('in-call');
             },
             onError: (e) => {
               console.error(e);
               showBanner(e?.message || String(e));
+              if (!handle?.room) {
+                // Join itself failed (e.g. signal down) — fall back to lobby.
+                document.body.classList.remove('in-call');
+              }
             },
           });
         } catch (e) {
           console.error(e);
           showBanner(e?.message || String(e));
         } finally {
+          joining = false;
           joinBtn.disabled = false;
         }
       }
 
       joinBtn.addEventListener('click', () => void startCall());
+      nameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') void startCall();
+      });
+      roomInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') void startCall();
+      });
 
       if (params.get('autostart') === '1') void startCall();
     </script>

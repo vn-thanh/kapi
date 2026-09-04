@@ -24,6 +24,8 @@ export class KapiRoom {
   private unsubSignal: (() => void) | null = null;
   private background: BackgroundProcessor | null = null;
   private currentBackground: BackgroundMode = 'none';
+  /** Monotonic token so a slow background start can't clobber a newer one. */
+  private backgroundSeq = 0;
   private closed = false;
   private micEnabled = true;
   private camEnabled = true;
@@ -76,13 +78,16 @@ export class KapiRoom {
   }
 
   private emit<E extends RoomEvent>(event: E, payload: RoomEventMap[E]) {
-    this.listeners.get(event)?.forEach((fn) => {
+    // Snapshot: a handler that unsubscribes itself must not skip the next one.
+    const handlers = this.listeners.get(event);
+    if (!handlers) return;
+    for (const fn of [...handlers]) {
       try {
         (fn as Handler<E>)(payload);
       } catch (err) {
         console.error('[kapi] listener error', err);
       }
-    });
+    }
   }
 
   private async start() {
@@ -105,6 +110,7 @@ export class KapiRoom {
 
     this.rawCameraStream = await getLocalStream(this.options.media!);
     this.localStream = this.rawCameraStream;
+    this.applyCamState();
 
     const bg = this.options.effects?.background ?? 'none';
     this.currentBackground = bg === undefined ? 'none' : bg;
@@ -164,6 +170,7 @@ export class KapiRoom {
       onTrack: (track, streams) =>
         this.emit('track', { peerId: remoteId, track, streams }),
       onConnectionState: (state) => {
+        this.emit('peer-state', { peerId: remoteId, state });
         if (state === 'connected') {
           this.restartAttempts.delete(remoteId);
           this.clearRestartTimer(remoteId);
@@ -171,6 +178,7 @@ export class KapiRoom {
           // Often transient — wait briefly, restart ICE if it does not recover.
           this.clearRestartTimer(remoteId);
           const timer = setTimeout(() => {
+            this.restartTimers.delete(remoteId);
             const cur = this.peers.get(remoteId);
             if (
               cur &&
@@ -196,6 +204,9 @@ export class KapiRoom {
         this.pendingNegotiation.delete(remoteId);
         void this.negotiate(remoteId, pending.iceRestart);
       },
+    }, {
+      videoCodec: this.options.videoCodec,
+      maxBitrate: this.options.maxBitrate,
     });
 
     if (this.localStream) await peer.addLocalTracks(this.localStream);
@@ -240,11 +251,8 @@ export class KapiRoom {
       return;
     }
     try {
-      const sdp = await peer.createAndSetOffer(
-        this.options.videoCodec,
-        this.options.maxBitrate,
-        iceRestart,
-      );
+      const sdp = await peer.createAndSetOffer(iceRestart);
+      if (this.closed || !this.peers.has(remoteId)) return;
       this.options.signal.send({
         type: 'offer',
         sdp,
@@ -305,11 +313,7 @@ export class KapiRoom {
           if (!from || msg.to !== this.options.peerId) return;
           const peer = await this.ensurePeer(from);
           if (!peer) return;
-          const answer = await peer.handleOffer(
-            msg.sdp,
-            this.options.videoCodec,
-            this.options.maxBitrate,
-          );
+          const answer = await peer.handleOffer(msg.sdp);
           if (answer) {
             this.options.signal.send({
               type: 'answer',
@@ -348,7 +352,24 @@ export class KapiRoom {
 
   setCam(enabled: boolean) {
     this.camEnabled = enabled;
-    for (const t of this.localStream?.getVideoTracks() ?? []) t.enabled = enabled;
+    this.applyCamState();
+  }
+
+  /**
+   * Toggle camera-origin video tracks only. While screen sharing the sent
+   * video is the screen track and must NOT be touched — previously toggling
+   * the camera also froze the shared screen because localStream carried it.
+   */
+  private applyCamState() {
+    if (this.screenStream) return;
+    const seen = new Set<MediaStreamTrack>();
+    for (const t of this.localStream?.getVideoTracks() ?? []) {
+      t.enabled = this.camEnabled;
+      seen.add(t);
+    }
+    for (const t of this.rawCameraStream?.getVideoTracks() ?? []) {
+      if (!seen.has(t)) t.enabled = this.camEnabled;
+    }
   }
 
   get micOn() {
@@ -364,27 +385,54 @@ export class KapiRoom {
   }
 
   async shareScreen(enabled: boolean) {
+    if (this.closed) return;
     if (enabled) {
-      this.screenStream = await getDisplayStream();
-      const track = this.screenStream.getVideoTracks()[0];
-      if (!track) throw new Error('getDisplayMedia returned no video track');
+      const stream = await getDisplayStream();
+      const track = stream.getVideoTracks()[0];
+      if (!track) {
+        stream.getTracks().forEach((t) => t.stop());
+        throw new Error('getDisplayMedia returned no video track');
+      }
       // Prefer quality for text/UI on shared screens
       if ('contentHint' in track) track.contentHint = 'detail';
+      this.screenStream = stream;
       track.onended = () => void this.shareScreen(false);
-      await this.replaceVideoTrack(track);
-      // Some browsers need a re-offer after display-capture replace (esp. if
-      // the peer originally had no outbound video).
-      await this.renegotiateAll();
-    } else {
-      this.screenStream?.getTracks().forEach((t) => t.stop());
-      this.screenStream = null;
-      if (this.currentBackground !== 'none') {
-        await this.setBackground(this.currentBackground);
-      } else {
-        const cam = this.rawCameraStream?.getVideoTracks()[0] ?? null;
-        await this.replaceVideoTrack(cam);
+      try {
+        await this.replaceVideoTrack(track);
+        // Some browsers need a re-offer after display-capture replace (esp. if
+        // the peer originally had no outbound video).
+        await this.renegotiateAll();
+      } catch (err) {
+        // Never straddle "sharing in state, camera on the wire" — roll back.
+        track.onended = null;
+        this.screenStream = null;
+        stream.getTracks().forEach((t) => t.stop());
+        await this.restoreCameraTrack();
+        throw err;
       }
-      await this.renegotiateAll();
+      return;
+    }
+
+    const stream = this.screenStream;
+    if (!stream) return;
+    this.screenStream = null;
+    for (const t of stream.getTracks()) {
+      t.onended = null;
+      t.stop();
+    }
+    await this.restoreCameraTrack();
+    await this.renegotiateAll();
+  }
+
+  private async restoreCameraTrack() {
+    if (this.closed) return;
+    if (this.currentBackground !== 'none') {
+      await this.setBackground(this.currentBackground);
+    } else {
+      const cam = this.rawCameraStream?.getVideoTracks()[0] ?? null;
+      await this.replaceVideoTrack(cam);
+      // camera reacquisition ends the share path; cam toggle applies again
+      this.applyCamState();
     }
   }
 
@@ -416,7 +464,8 @@ export class KapiRoom {
   }
 
   async setBackground(mode: BackgroundMode) {
-    if (!this.rawCameraStream) return;
+    if (!this.rawCameraStream || this.closed) return;
+    const seq = ++this.backgroundSeq;
     this.currentBackground = mode;
 
     if (mode === 'none') {
@@ -425,6 +474,7 @@ export class KapiRoom {
       this.localStream = this.rawCameraStream;
       const v = this.rawCameraStream.getVideoTracks()[0] ?? null;
       if (!this.screenStream) await this.replaceVideoTrack(v);
+      this.applyCamState();
       this.emit('local-stream', { stream: this.localStream });
       return;
     }
@@ -437,15 +487,24 @@ export class KapiRoom {
       });
     }
     const processed = await this.background.start(this.rawCameraStream, mode);
+    // A newer setBackground/hangup superseded this start — drop its output.
+    if (seq !== this.backgroundSeq || this.closed) {
+      processed.getTracks().forEach((t) => {
+        if (t.kind === 'video') t.stop();
+      });
+      return;
+    }
     this.localStream = processed;
     if (!this.screenStream) {
       const v = processed.getVideoTracks()[0] ?? null;
       await this.replaceVideoTrack(v);
     }
+    this.applyCamState();
     this.emit('local-stream', { stream: this.localStream });
   }
 
   async switchDevice(kind: 'audioinput' | 'videoinput', deviceId: string) {
+    if (this.closed) return;
     if (kind === 'audioinput') {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { deviceId: { exact: deviceId } },
@@ -480,6 +539,9 @@ export class KapiRoom {
     });
     const track = stream.getVideoTracks()[0];
     if (!track) return;
+    // Respect the camera toggle — a fresh track defaults to enabled=true and
+    // would silently turn the camera back on while the UI shows it off.
+    track.enabled = this.camEnabled;
     if (this.rawCameraStream) {
       const old = this.rawCameraStream.getVideoTracks()[0];
       if (old) {
@@ -493,12 +555,14 @@ export class KapiRoom {
     } else if (!this.screenStream) {
       this.localStream = this.rawCameraStream;
       await this.replaceVideoTrack(track);
+      this.applyCamState();
     }
   }
 
   async hangup() {
     if (this.closed) return;
     this.closed = true;
+    this.backgroundSeq++;
     if (typeof window !== 'undefined') {
       window.removeEventListener('pagehide', this.onPageUnload);
       window.removeEventListener('beforeunload', this.onPageUnload);
@@ -513,7 +577,15 @@ export class KapiRoom {
     for (const id of [...this.peers.keys()]) this.removePeer(id);
     this.background?.stop();
     this.background = null;
-    this.screenStream?.getTracks().forEach((t) => t.stop());
+    // Detach onended before stopping: otherwise stopping the screen track
+    // fires shareScreen(false) re-entry on an already-closing room.
+    if (this.screenStream) {
+      for (const t of this.screenStream.getTracks()) {
+        t.onended = null;
+        t.stop();
+      }
+      this.screenStream = null;
+    }
     this.rawCameraStream?.getTracks().forEach((t) => t.stop());
     if (this.localStream && this.localStream !== this.rawCameraStream) {
       this.localStream.getTracks().forEach((t) => t.stop());

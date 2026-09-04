@@ -15,12 +15,26 @@ type ImageSegmenterResult = import('@mediapipe/tasks-vision').ImageSegmenterResu
  *
  * MediaPipe is loaded lazily on first background effect so bare-module demos
  * can join a call without an import map until blur/remove is used.
+ *
+ * Re-entrancy: `start()` may be called while already running (device switch,
+ * mode change). It always cancels the previous rAF loop and stops the old
+ * captureStream video track first — previously each start spawned another
+ * loop, so repeated calls stacked loops, fired duplicate MediaPipe
+ * inferences with colliding timestamps, and leaked encoder tracks.
  */
 export class BackgroundProcessor {
   private segmenter: ImageSegmenter | null = null;
+  private segmenterReady: Promise<ImageSegmenter> | null = null;
   private video: HTMLVideoElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
+  /** Scratch compositing layers — the mask arrives small (e.g. 256×256) and is
+   *  scaled by drawImage, so per-pixel JS compositing is unnecessary. */
+  private maskCanvas: HTMLCanvasElement | null = null;
+  private maskCtx: CanvasRenderingContext2D | null = null;
+  private personCanvas: HTMLCanvasElement | null = null;
+  private personCtx: CanvasRenderingContext2D | null = null;
+  private outStream: MediaStream | null = null;
   private raf = 0;
   private mode: BackgroundMode = 'none';
   private bgImage: HTMLImageElement | null = null;
@@ -34,20 +48,15 @@ export class BackgroundProcessor {
     this.blurAmount = opts.blurAmount ?? 12;
   }
 
-  async start(source: MediaStream, mode: BackgroundMode): Promise<MediaStream> {
-    this.mode = mode;
-    if (typeof mode === 'object' && mode.image) {
-      this.bgImage = await loadImage(mode.image);
-    } else {
-      this.bgImage = null;
-    }
-
-    if (!this.segmenter) {
+  private async ensureSegmenter(): Promise<ImageSegmenter> {
+    if (this.segmenter) return this.segmenter;
+    // Dedupe concurrent starts so the wasm/model loads exactly once.
+    this.segmenterReady ??= (async () => {
       const { FilesetResolver, ImageSegmenter } = await import('@mediapipe/tasks-vision');
       const vision = await FilesetResolver.forVisionTasks(
         'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/wasm',
       );
-      this.segmenter = await ImageSegmenter.createFromOptions(vision, {
+      return ImageSegmenter.createFromOptions(vision, {
         baseOptions: {
           modelAssetPath: this.modelUrl,
           delegate: 'GPU',
@@ -56,7 +65,21 @@ export class BackgroundProcessor {
         outputCategoryMask: true,
         outputConfidenceMasks: false,
       });
+    })();
+    this.segmenter = await this.segmenterReady;
+    this.segmenterReady = null;
+    return this.segmenter;
+  }
+
+  async start(source: MediaStream, mode: BackgroundMode): Promise<MediaStream> {
+    this.mode = mode;
+    if (typeof mode === 'object' && mode.image) {
+      this.bgImage = await loadImage(mode.image);
+    } else {
+      this.bgImage = null;
     }
+
+    await this.ensureSegmenter();
 
     if (!this.video) {
       this.video = document.createElement('video');
@@ -71,18 +94,25 @@ export class BackgroundProcessor {
     const h = this.video.videoHeight || 480;
     if (!this.canvas) {
       this.canvas = document.createElement('canvas');
-      this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+      this.ctx = this.canvas.getContext('2d', { willReadFrequently: false });
     }
     this.canvas.width = w;
     this.canvas.height = h;
 
-    this.running = true;
-    this.loop();
+    // Retire the previous output — its capture track would keep encoding an
+    // abandoned canvas otherwise.
+    if (this.outStream) {
+      for (const t of this.outStream.getVideoTracks()) t.stop();
+      this.outStream = null;
+    }
+
+    this.lastTs = -1;
+    this.startLoop();
 
     const fps = 30;
     const out = this.canvas.captureStream(fps);
-    const audio = source.getAudioTracks();
-    for (const t of audio) out.addTrack(t);
+    for (const t of source.getAudioTracks()) out.addTrack(t);
+    this.outStream = out;
     return out;
   }
 
@@ -95,109 +125,126 @@ export class BackgroundProcessor {
     }
   }
 
-  stop() {
+  private startLoop() {
+    this.stopLoop();
+    this.running = true;
+    this.raf = requestAnimationFrame(this.loop);
+  }
+
+  private stopLoop() {
     this.running = false;
     cancelAnimationFrame(this.raf);
+    this.raf = 0;
+  }
+
+  stop() {
+    this.stopLoop();
+    this.outStream?.getTracks().forEach((t) => {
+      if (t.kind === 'video') t.stop();
+    });
+    this.outStream = null;
     this.segmenter?.close();
     this.segmenter = null;
+    this.segmenterReady = null;
     if (this.video) {
       this.video.srcObject = null;
       this.video = null;
     }
     this.canvas = null;
     this.ctx = null;
+    this.maskCanvas = null;
+    this.maskCtx = null;
+    this.personCanvas = null;
+    this.personCtx = null;
     this.bgImage = null;
   }
 
   private loop = () => {
-    if (!this.running || !this.video || !this.canvas || !this.ctx || !this.segmenter) return;
+    const { video, canvas, segmenter } = this;
+    if (!this.running || !video || !canvas || !this.ctx || !segmenter) return;
     const now = performance.now();
     // Skip until the element has a real frame — MediaPipe GPU path throws
     // "texImage2D: no video" when width/height are still 0.
     if (
-      this.video.readyState >= 2 &&
-      this.video.videoWidth > 0 &&
-      this.video.videoHeight > 0 &&
+      video.readyState >= 2 &&
+      video.videoWidth > 0 &&
+      video.videoHeight > 0 &&
       now !== this.lastTs
     ) {
       this.lastTs = now;
-      if (this.canvas.width !== this.video.videoWidth || this.canvas.height !== this.video.videoHeight) {
-        this.canvas.width = this.video.videoWidth;
-        this.canvas.height = this.video.videoHeight;
+      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
       }
       try {
-        this.segmenter.segmentForVideo(this.video, now, (result) => this.paint(result));
+        segmenter.segmentForVideo(video, now, (result) => this.paint(result));
       } catch {
-        this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       }
     }
     this.raf = requestAnimationFrame(this.loop);
   };
 
   private paint(result: ImageSegmenterResult) {
-    if (!this.video || !this.canvas || !this.ctx) return;
-    const w = this.canvas.width;
-    const h = this.canvas.height;
+    const { video, canvas, ctx } = this;
+    if (!video || !canvas || !ctx) return;
+    const w = canvas.width;
+    const h = canvas.height;
     const mask = result.categoryMask;
     if (!mask) {
-      this.ctx.drawImage(this.video, 0, 0, w, h);
+      ctx.drawImage(video, 0, 0, w, h);
       return;
     }
 
-    this.ctx.drawImage(this.video, 0, 0, w, h);
-    const frame = this.ctx.getImageData(0, 0, w, h);
-    const data = frame.data;
-    const maskData = mask.getAsUint8Array();
-
-    // Prepare background layer
-    const bg = this.ctx.createImageData(w, h);
+    // 1. Paint the replacement background.
     if (this.mode === 'blur') {
-      this.ctx.filter = `blur(${this.blurAmount}px)`;
-      this.ctx.drawImage(this.video, 0, 0, w, h);
-      this.ctx.filter = 'none';
-      const blurred = this.ctx.getImageData(0, 0, w, h);
-      bg.data.set(blurred.data);
-      this.ctx.putImageData(frame, 0, 0);
+      ctx.save();
+      ctx.filter = `blur(${this.blurAmount}px)`;
+      ctx.drawImage(video, 0, 0, w, h);
+      ctx.restore();
     } else if (typeof this.mode === 'object' && this.bgImage) {
-      this.ctx.drawImage(this.bgImage, 0, 0, w, h);
-      const img = this.ctx.getImageData(0, 0, w, h);
-      bg.data.set(img.data);
-      this.ctx.putImageData(frame, 0, 0);
+      ctx.drawImage(this.bgImage, 0, 0, w, h);
     } else {
-      // remove → solid dark green-screen-ish neutral
-      for (let i = 0; i < bg.data.length; i += 4) {
-        bg.data[i] = 16;
-        bg.data[i + 1] = 16;
-        bg.data[i + 2] = 16;
-        bg.data[i + 3] = 255;
-      }
+      // remove → neutral dark backdrop
+      ctx.fillStyle = '#101010';
+      ctx.fillRect(0, 0, w, h);
     }
 
-    const out = this.ctx.createImageData(w, h);
+    // 2. Rasterize the category mask (0 = background, >0 = person) into an
+    //    alpha channel. The mask is small; only this loop is per-pixel.
+    if (!this.maskCanvas) {
+      this.maskCanvas = document.createElement('canvas');
+      this.maskCtx = this.maskCanvas.getContext('2d');
+    }
     const mw = mask.width;
     const mh = mask.height;
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = (y * w + x) * 4;
-        const mx = Math.min(mw - 1, Math.floor((x / w) * mw));
-        const my = Math.min(mh - 1, Math.floor((y / h) * mh));
-        // selfie_segmenter: 0 = person (category) in some builds; confidence-like in others
-        const m = maskData[my * mw + mx] ?? 0;
-        const person = m > 0;
-        if (person) {
-          out.data[i] = data[i]!;
-          out.data[i + 1] = data[i + 1]!;
-          out.data[i + 2] = data[i + 2]!;
-          out.data[i + 3] = 255;
-        } else {
-          out.data[i] = bg.data[i]!;
-          out.data[i + 1] = bg.data[i + 1]!;
-          out.data[i + 2] = bg.data[i + 2]!;
-          out.data[i + 3] = 255;
-        }
-      }
+    if (this.maskCanvas.width !== mw) this.maskCanvas.width = mw;
+    if (this.maskCanvas.height !== mh) this.maskCanvas.height = mh;
+    const maskRgba = this.maskCtx!.createImageData(mw, mh);
+    const maskData = mask.getAsUint8Array();
+    for (let i = 0; i < maskData.length; i++) {
+      const alpha = maskData[i]! > 0 ? 255 : 0;
+      maskRgba.data[i * 4 + 3] = alpha;
     }
-    this.ctx.putImageData(out, 0, 0);
+    this.maskCtx!.putImageData(maskRgba, 0, 0);
+
+    // 3. Composite the person over the background via GPU-accelerated
+    //    drawImage + destination-in (replaces the old full-resolution
+    //    per-pixel JS merge).
+    if (!this.personCanvas) {
+      this.personCanvas = document.createElement('canvas');
+      this.personCtx = this.personCanvas.getContext('2d');
+    }
+    if (this.personCanvas.width !== w) this.personCanvas.width = w;
+    if (this.personCanvas.height !== h) this.personCanvas.height = h;
+    const pctx = this.personCtx!;
+    pctx.globalCompositeOperation = 'source-over';
+    pctx.drawImage(video, 0, 0, w, h);
+    pctx.globalCompositeOperation = 'destination-in';
+    pctx.drawImage(this.maskCanvas, 0, 0, w, h);
+    pctx.globalCompositeOperation = 'source-over';
+
+    ctx.drawImage(this.personCanvas, 0, 0);
     mask.close();
   }
 }

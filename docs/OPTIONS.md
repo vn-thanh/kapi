@@ -52,3 +52,15 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
   onError?: (error: Error) => void
 }
 ```
+
+## Room events (`room.on(event, handler)`)
+
+| Event | Payload | Notes |
+|-------|---------|-------|
+| `peer-joined` | `{ peerId, displayName? }` | Presence + peer connection created |
+| `peer-left` | `{ peerId }` | Link torn down / `leave` received |
+| `track` | `{ peerId, track, streams }` | Remote media arrived; merge tracks into one stream per peer (browser `streams` identity is unreliable across renegotiation) |
+| `peer-state` | `{ peerId, state }` | RTCPeerConnection state — drive connection badges |
+| `local-stream` | `{ stream }` | Local preview source; re-emitted on screen share, background, device switch |
+| `error` | `{ error }` | Recoverable errors (ICE exhausted, maxPeers, …) |
+| `hangup` | — | Room closed |

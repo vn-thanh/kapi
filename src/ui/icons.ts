@@ -16,3 +16,11 @@ export function toolbarIconHtml(id: string, muted = false): string {
   if (id === 'cam') return muted ? ICONS.camOff! : ICONS.cam!;
   return ICONS[id] ?? '';
 }
+
+/** Small status glyph (remote mute chip, etc.). */
+export function statusIconHtml(name: 'micOff' | 'camOff'): string {
+  return (name === 'micOff' ? ICONS.micOff! : ICONS.camOff!).replace(
+    'width="20" height="20"',
+    'width="12" height="12"',
+  );
+}

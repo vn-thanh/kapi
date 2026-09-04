@@ -71,16 +71,13 @@ export function createBroadcastSignalAdapter(
 
     if (msg.type === 'join') {
       roster.set(msg.peerId, msg.displayName);
-      // Existing tab → send roster to the joiner so they can offer (mesh).
-      const peers = [
-        { peerId, displayName: myDisplayName },
-        ...[...roster.entries()]
-          .filter(([id]) => id !== msg.peerId)
-          .map(([id, displayName]) => ({ peerId: id, displayName })),
-      ];
+      // Each live tab introduces ITSELF to the joiner, who then offers.
+      // Previously every tab forwarded its whole cached roster — crashed tabs
+      // never send `leave` on BroadcastChannel, so ghosts accumulated and each
+      // new joiner wasted offer/ICE attempts on dead peer ids.
       bc.postMessage({
         type: 'peers',
-        peers,
+        peers: [{ peerId, displayName: myDisplayName }],
         _from: peerId,
         _to: msg.peerId,
       });

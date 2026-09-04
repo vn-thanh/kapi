@@ -6,49 +6,101 @@ import type {
   KapiMountOptions,
   ToolbarButton,
 } from '../types';
-import { toolbarIconHtml } from './icons';
+import { toolbarIconHtml, statusIconHtml } from './icons';
 import { injectStyles } from './styles';
+
+type Tile = {
+  wrap: HTMLDivElement;
+  video: HTMLVideoElement;
+  label: HTMLSpanElement;
+  avatar: HTMLDivElement;
+  conn: HTMLSpanElement;
+  micChip: HTMLSpanElement;
+};
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  const a = parts[0]![0] ?? '?';
+  const b = parts.length > 1 ? parts[parts.length - 1]![0] : '';
+  return (a + b).toUpperCase();
+}
 
 export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMountHandle {
   injectStyles();
   const theme = { ...DEFAULT_THEME, ...options.theme };
   const labels = { ...DEFAULT_LABELS, ...options.labels };
   const toolbarBtns = options.toolbar?.length ? options.toolbar : DEFAULT_TOOLBAR;
+  const selfId = options.peerId;
+  const selfName = options.displayName?.trim() || labels.you;
 
   const root = document.createElement('div');
   root.className = 'kapi-root';
-  root.style.setProperty('--kapi-bg', theme.bg);
-  root.style.setProperty('--kapi-fg', theme.fg);
-  root.style.setProperty('--kapi-accent', theme.accent);
-  root.style.setProperty('--kapi-danger', theme.danger);
-  root.style.setProperty('--kapi-tile', theme.tileBg);
-  root.style.setProperty('--kapi-toolbar', theme.toolbarBg);
+  for (const [key, value] of Object.entries({
+    bg: theme.bg,
+    fg: theme.fg,
+    accent: theme.accent,
+    danger: theme.danger,
+    tile: theme.tileBg,
+    toolbar: theme.toolbarBg,
+  })) {
+    root.style.setProperty(`--kapi-${key}`, value);
+  }
 
   const grid = document.createElement('div');
   grid.className = 'kapi-grid';
   const bar = document.createElement('div');
   bar.className = 'kapi-toolbar';
   const pane = document.createElement('div');
-  pane.className = 'kapi-participants hidden';
+  pane.className = 'kapi-panel kapi-participants hidden';
   const settingsEl = document.createElement('div');
-  settingsEl.className = 'kapi-settings hidden';
+  settingsEl.className = 'kapi-panel kapi-settings hidden';
+  const toast = document.createElement('div');
+  toast.className = 'kapi-toast hidden';
+  toast.setAttribute('role', 'alert');
+
+  const soundGate = document.createElement('button');
+  soundGate.type = 'button';
+  soundGate.className = 'kapi-sound-gate hidden';
+  soundGate.textContent = labels.enableSound;
+
+  root.append(grid, pane, settingsEl, bar, toast, soundGate);
   parent.appendChild(root);
 
-  const tiles = new Map<string, HTMLVideoElement>();
+  const tiles = new Map<string, Tile>();
+  /** One managed stream per remote peer — never trust `ontrack` stream
+   *  identity: with replaceTrack/renegotiation browsers may report audio and
+   *  video on *different* MediaStream objects (or none at all), which used to
+   *  break remote audio. We merge tracks ourselves. */
   const remoteStreams = new Map<string, MediaStream>();
-  /** Separate <audio> for remotes — <video muted> shows picture; audio needs a user gesture. */
+  /** Separate <audio> for remotes — muted <video> satisfies autoplay, audio needs a gesture. */
   const remoteAudio = new Map<string, HTMLAudioElement>();
   let soundUnlocked = false;
   let room: KapiRoom | null = null;
   let disposed = false;
   let bgMode: BackgroundMode = options.effects?.background ?? 'none';
   const unsubs: Array<() => void> = [];
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const soundGate = document.createElement('button');
-  soundGate.type = 'button';
-  soundGate.className = 'kapi-sound-gate hidden';
-  soundGate.textContent = labels.enableSound;
-  root.append(grid, pane, settingsEl, bar, soundGate);
+  // ---------- toast / errors ----------
+
+  function showToast(text: string, isError = true) {
+    if (disposed) return;
+    toast.textContent = text;
+    toast.classList.toggle('is-error', isError);
+    toast.classList.remove('hidden');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.add('hidden'), 4500);
+  }
+
+  function reportError(err: unknown) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    console.error('[kapi]', error);
+    showToast(error.message || String(err));
+    options.onError?.(error);
+  }
+
+  // ---------- sound gate ----------
 
   function showSoundGate() {
     if (soundUnlocked || disposed) return;
@@ -75,40 +127,123 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     { passive: true },
   );
 
+  // ---------- tiles ----------
+
   function layoutGrid() {
     const n = Math.max(1, tiles.size);
     const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+    // Size rows explicitly: auto rows sized themselves to the video's
+    // intrinsic resolution (e.g. 1280×720) and blew out of the grid.
+    const rows = Math.ceil(n / cols);
     grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
   }
 
-  function ensureTile(peerId: string, label: string, stream?: MediaStream | null) {
-    let video = tiles.get(peerId);
-    if (!video) {
-      const wrap = document.createElement('div');
-      wrap.className = 'kapi-tile';
-      wrap.dataset.peerId = peerId;
-      video = document.createElement('video');
-      video.autoplay = true;
-      video.playsInline = true;
-      // Always muted on <video> to satisfy autoplay; remote audio uses <audio>.
-      video.muted = true;
-      const tag = document.createElement('span');
-      tag.className = 'kapi-label';
-      tag.textContent = label;
-      wrap.append(video, tag);
-      grid.appendChild(wrap);
-      tiles.set(peerId, video);
-    } else {
-      const tag = video.parentElement?.querySelector('.kapi-label');
-      if (tag) tag.textContent = label;
+  function ensureTile(peerId: string, label: string): Tile {
+    let tile = tiles.get(peerId);
+    if (tile) {
+      tile.label.textContent = label;
+      const chip = tile.avatar.querySelector('.kapi-avatar-initials');
+      if (chip) chip.textContent = initials(label);
+      return tile;
     }
-    if (stream) {
-      if (video.srcObject !== stream) video.srcObject = stream;
-      void video.play().catch(() => undefined);
-      if (peerId !== options.peerId) bindRemoteAudio(peerId, stream);
-    }
+    const wrap = document.createElement('div');
+    wrap.className = 'kapi-tile video-off';
+    wrap.dataset.peerId = peerId;
+    if (peerId === selfId) wrap.classList.add('kapi-local');
+
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    // Always muted on <video> to satisfy autoplay; remote audio uses <audio>.
+    video.muted = true;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'kapi-avatar';
+    const avatarInitials = document.createElement('span');
+    avatarInitials.className = 'kapi-avatar-initials';
+    avatarInitials.textContent = initials(nameFor(peerId, label));
+    avatar.appendChild(avatarInitials);
+
+    const meta = document.createElement('div');
+    meta.className = 'kapi-tile-meta';
+    const conn = document.createElement('span');
+    conn.className = 'kapi-conn';
+    conn.title = 'connecting';
+    const tag = document.createElement('span');
+    tag.className = 'kapi-label';
+    tag.textContent = label;
+    const micChip = document.createElement('span');
+    micChip.className = 'kapi-mic-state hidden';
+    micChip.innerHTML = statusIconHtml('micOff');
+    meta.append(conn, tag, micChip);
+
+    wrap.append(video, avatar, meta);
+    grid.appendChild(wrap);
+    tile = { wrap, video, label: tag, avatar, conn, micChip };
+    tiles.set(peerId, tile);
     layoutGrid();
-    return video;
+    return tile;
+  }
+
+  function nameFor(peerId: string, fallback: string): string {
+    if (peerId === selfId) return fallback;
+    return fallback || peerId;
+  }
+
+  /** Reflect "no live video" (muted/disabled/no track) with an avatar overlay. */
+  function syncVideoVisibility(tile: Tile, stream: MediaStream | null) {
+    const hasLiveVideo =
+      !!stream && stream.getVideoTracks().some((t) => !t.muted && t.enabled && t.readyState === 'live');
+    tile.wrap.classList.toggle('video-off', !hasLiveVideo);
+  }
+
+  function attachLocalStream(stream: MediaStream) {
+    const tile = ensureTile(selfId, selfName === labels.you ? labels.you : `${selfName} (${labels.you})`);
+    const chip = tile.avatar.querySelector('.kapi-avatar-initials');
+    if (chip) chip.textContent = initials(selfName);
+    if (tile.video.srcObject !== stream) tile.video.srcObject = stream;
+    void tile.video.play().catch(() => undefined);
+    // Mirror the camera preview, but never a screen share (text would flip).
+    tile.wrap.classList.toggle('mirror', !(room?.sharing ?? false));
+    syncVideoVisibility(tile, stream);
+  }
+
+  function mergeRemoteTrack(peerId: string, track: MediaStreamTrack): MediaStream {
+    let stream = remoteStreams.get(peerId);
+    if (!stream) {
+      stream = new MediaStream();
+      remoteStreams.set(peerId, stream);
+    }
+    if (!stream.getTracks().includes(track)) stream.addTrack(track);
+    return stream;
+  }
+
+  function attachRemoteTrack(peerId: string, track: MediaStreamTrack) {
+    const stream = mergeRemoteTrack(peerId, track);
+    const meta = room?.participants.find((p) => p.peerId === peerId);
+    const tile = ensureTile(peerId, meta?.displayName ?? peerId);
+    if (tile.video.srcObject !== stream) tile.video.srcObject = stream;
+
+    const refresh = () => {
+      if (disposed) return;
+      syncVideoVisibility(tile, stream);
+      void tile.video.play().catch(() => undefined);
+      if (stream.getAudioTracks().length) bindRemoteAudio(peerId, stream);
+      updateMicChip(tile, stream);
+    };
+    // Sender-side track.enabled=false stops RTP → remote onmute fires;
+    // onunmute marks recovery / replaceTrack content swaps (screen share).
+    track.addEventListener('mute', refresh);
+    track.addEventListener('unmute', refresh);
+    track.addEventListener('ended', refresh);
+    refresh();
+  }
+
+  function updateMicChip(tile: Tile, stream: MediaStream) {
+    const aud = stream.getAudioTracks()[0];
+    const micOff = !!aud && (aud.muted || !aud.enabled) && aud.readyState === 'live';
+    tile.micChip.classList.toggle('hidden', !micOff);
   }
 
   function bindRemoteAudio(peerId: string, stream: MediaStream) {
@@ -128,11 +263,9 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       void audio.play().catch(() => undefined);
       return;
     }
-    // Try unmuted playback first — joining the call is usually a click, and
-    // Chrome/Firefox often allow audio started near that activation. Only fall
-    // back to muted + the "Tap to enable sound" gate if autoplay is blocked.
-    // Previously every remote started muted, so guests who never clicked the
-    // gate heard nothing.
+    // Try unmuted playback first — joining is usually a click, and browsers
+    // often allow audio near that activation. Fall back to muted + the
+    // "Tap to enable sound" gate only if autoplay is blocked.
     audio.muted = false;
     void audio
       .play()
@@ -146,8 +279,12 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   }
 
   function removeTile(peerId: string) {
-    tiles.get(peerId)?.parentElement?.remove();
+    const tile = tiles.get(peerId);
+    if (!tile) return;
+    tile.video.srcObject = null;
+    tile.wrap.remove();
     tiles.delete(peerId);
+    remoteStreams.get(peerId)?.getTracks().forEach((t) => t.stop());
     remoteStreams.delete(peerId);
     const audio = remoteAudio.get(peerId);
     if (audio) {
@@ -158,26 +295,48 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     layoutGrid();
   }
 
+  // ---------- panels ----------
+
+  function showPanel(which: 'participants' | 'settings', show: boolean) {
+    const el = which === 'participants' ? pane : settingsEl;
+    const other = which === 'participants' ? settingsEl : pane;
+    if (show) other.classList.add('hidden');
+    el.classList.toggle('hidden', !show);
+  }
+
   function renderParticipants() {
     if (!room) return;
-    pane.innerHTML = `<h3>${labels.participants}</h3>`;
+    pane.innerHTML = '';
+    const h = document.createElement('h3');
+    h.textContent = labels.participants;
+    const count = document.createElement('span');
+    count.className = 'kapi-count';
+    count.textContent = String(room.participants.length);
+    h.appendChild(count);
+    pane.appendChild(h);
     const ul = document.createElement('ul');
     for (const p of room.participants) {
       const li = document.createElement('li');
-      li.textContent =
-        p.peerId === options.peerId
+      const dot = document.createElement('span');
+      dot.className = 'kapi-dot';
+      const name = document.createElement('span');
+      name.textContent =
+        p.peerId === selfId
           ? `${p.displayName ?? p.peerId} (${labels.you})`
           : (p.displayName ?? p.peerId);
+      li.append(dot, name);
       ul.appendChild(li);
     }
     pane.appendChild(ul);
   }
 
-  function paintButton(b: HTMLButtonElement, id: ToolbarButton, text: string, muted = false) {
+  function paintButton(b: HTMLButtonElement, id: ToolbarButton, text: string, mode: 'on' | 'off' | 'active' = 'on') {
     b.title = text;
     b.setAttribute('aria-label', text);
-    b.innerHTML = toolbarIconHtml(id, muted);
-    b.classList.toggle('is-off', muted);
+    b.setAttribute('aria-pressed', mode === 'off' ? 'false' : 'true');
+    b.innerHTML = toolbarIconHtml(id, mode === 'off');
+    b.classList.toggle('is-off', mode === 'off');
+    b.classList.toggle('is-active', mode === 'active');
   }
 
   function updateToolbarLabels() {
@@ -187,47 +346,78 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       const id = b.getAttribute('data-id') as ToolbarButton | null;
       if (!id) continue;
       if (id === 'mic') {
-        paintButton(b, id, room.micOn ? labels.micOn : labels.micOff, !room.micOn);
+        paintButton(b, id, room.micOn ? labels.micOn : labels.micOff, room.micOn ? 'on' : 'off');
       } else if (id === 'cam') {
-        paintButton(b, id, room.camOn ? labels.camOn : labels.camOff, !room.camOn);
+        paintButton(b, id, room.camOn ? labels.camOn : labels.camOff, room.camOn ? 'on' : 'off');
       } else if (id === 'share') {
-        paintButton(b, id, room.sharing ? labels.stopShare : labels.share, room.sharing);
+        // Active while sharing (accent) — previously the button greyed out,
+        // which read as "disabled" instead of "in progress".
+        paintButton(b, id, room.sharing ? labels.stopShare : labels.share, room.sharing ? 'active' : 'on');
       }
     }
+    const selfTile = tiles.get(selfId);
+    if (selfTile && room.localMedia) syncVideoVisibility(selfTile, room.localMedia);
   }
 
   async function showSettings() {
     if (!room) return;
-    settingsEl.classList.toggle('hidden');
-    if (settingsEl.classList.contains('hidden')) return;
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    settingsEl.innerHTML = `<h3>${labels.settings}</h3>`;
+    const opening = settingsEl.classList.contains('hidden');
+    showPanel('settings', opening);
+    if (!opening) return;
+    let devices: MediaDeviceInfo[] = [];
+    try {
+      devices = await navigator.mediaDevices.enumerateDevices();
+    } catch (err) {
+      reportError(err);
+      return;
+    }
+    settingsEl.innerHTML = '';
+    const h = document.createElement('h3');
+    h.textContent = labels.settings;
+    settingsEl.appendChild(h);
 
-    const addSelect = (title: string, kind: MediaDeviceKind, onPick: (id: string) => void) => {
+    const currentDevice = (kind: 'audio' | 'video'): string | undefined =>
+      room?.localMedia
+        ?.getTracks()
+        .find((t) => t.kind === kind && t.readyState === 'live')
+        ?.getSettings().deviceId;
+
+    const addSelect = (title: string, kind: MediaDeviceKind, active: 'audio' | 'video', onPick: (id: string) => void) => {
       const wrap = document.createElement('label');
       wrap.className = 'kapi-device';
       wrap.append(document.createTextNode(title));
       const sel = document.createElement('select');
+      const current = currentDevice(active);
+      let foundCurrent = false;
       for (const d of devices.filter((x) => x.kind === kind)) {
         const opt = document.createElement('option');
         opt.value = d.deviceId;
-        opt.textContent = d.label || d.deviceId.slice(0, 8);
+        opt.textContent = d.label || `${title} ${sel.options.length + 1}`;
+        if (d.deviceId === current) {
+          opt.selected = true;
+          foundCurrent = true;
+        }
         sel.appendChild(opt);
       }
+      if (!foundCurrent && sel.options.length) sel.selectedIndex = 0;
       sel.addEventListener('change', () => onPick(sel.value));
       wrap.appendChild(sel);
       settingsEl.appendChild(wrap);
     };
 
-    addSelect('Microphone', 'audioinput', (id) => void room?.switchDevice('audioinput', id));
-    addSelect('Camera', 'videoinput', (id) => void room?.switchDevice('videoinput', id));
+    addSelect('Microphone', 'audioinput', 'audio', (id) => {
+      room?.switchDevice('audioinput', id).catch(reportError);
+    });
+    addSelect('Camera', 'videoinput', 'video', (id) => {
+      room?.switchDevice('videoinput', id).catch(reportError);
+    });
   }
 
   function makeButton(id: ToolbarButton, text: string, onClick: () => void) {
     const b = document.createElement('button');
     b.type = 'button';
     b.dataset.id = id;
-    paintButton(b, id, text, false);
+    paintButton(b, id, text, 'on');
     b.addEventListener('click', () => {
       unlockSound();
       onClick();
@@ -235,9 +425,12 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     return b;
   }
 
+  // ---------- lifecycle ----------
+
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    clearTimeout(toastTimer);
     unsubs.forEach((u) => u());
     unsubs.length = 0;
     for (const audio of remoteAudio.values()) {
@@ -245,9 +438,15 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       audio.remove();
     }
     remoteAudio.clear();
-    void room?.hangup();
+    remoteStreams.clear();
+    tiles.clear();
+    const r = room;
     room = null;
+    void r?.hangup();
     root.remove();
+    // Single dispatch point: the toolbar button and an external room.hangup()
+    // (via the 'hangup' listener below) both funnel through dispose().
+    options.onHangup?.();
   };
 
   const actions: Record<ToolbarButton, () => void> = {
@@ -263,11 +462,15 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     },
     share: () => {
       if (!room) return;
-      void room.shareScreen(!room.sharing).then(updateToolbarLabels);
+      room
+        .shareScreen(!room.sharing)
+        .catch(reportError)
+        .finally(updateToolbarLabels);
     },
     participants: () => {
-      pane.classList.toggle('hidden');
-      renderParticipants();
+      const opening = pane.classList.contains('hidden');
+      if (opening) renderParticipants();
+      showPanel('participants', opening);
     },
     background: () => {
       if (!room) return;
@@ -275,13 +478,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       const cur = typeof bgMode === 'string' ? bgMode : 'none';
       const idx = Math.max(0, modes.indexOf(cur as 'none' | 'blur' | 'remove'));
       bgMode = modes[(idx + 1) % modes.length]!;
-      void room.setBackground(bgMode);
+      room.setBackground(bgMode).catch(reportError);
     },
     settings: () => void showSettings(),
-    hangup: () => {
-      options.onHangup?.();
-      dispose();
-    },
+    hangup: () => dispose(),
   };
 
   for (const id of toolbarBtns) {
@@ -306,48 +506,35 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       room = r;
       options.onReady?.(r);
       updateToolbarLabels();
-      if (r.localMedia) ensureTile(options.peerId, labels.you, r.localMedia);
+      if (r.localMedia) attachLocalStream(r.localMedia);
 
       unsubs.push(
-        r.on('local-stream', ({ stream }) => ensureTile(options.peerId, labels.you, stream)),
+        r.on('local-stream', ({ stream }) => attachLocalStream(stream)),
         r.on('peer-joined', ({ peerId, displayName }) => {
-          ensureTile(peerId, displayName ?? peerId, remoteStreams.get(peerId));
+          ensureTile(peerId, displayName ?? peerId);
           renderParticipants();
         }),
         r.on('peer-left', ({ peerId }) => {
           removeTile(peerId);
           renderParticipants();
         }),
-        r.on('track', ({ peerId, track, streams }) => {
-          let stream = streams[0] ?? remoteStreams.get(peerId);
-          if (!stream) {
-            stream = new MediaStream();
-            remoteStreams.set(peerId, stream);
-          } else {
-            remoteStreams.set(peerId, stream);
-          }
-          if (!stream.getTracks().includes(track)) stream.addTrack(track);
-          const meta = r.participants.find((p) => p.peerId === peerId);
-          const video = ensureTile(peerId, meta?.displayName ?? peerId, stream);
-          // replaceTrack (screen share) keeps the same receiver track; force the
-          // <video> to pick up resolution / content changes.
-          const refresh = () => {
-            if (video.srcObject !== stream) video.srcObject = stream;
-            void video.play().catch(() => undefined);
-            bindRemoteAudio(peerId, stream);
-          };
-          track.addEventListener('unmute', refresh);
-          track.addEventListener('resize', refresh);
-          refresh();
+        r.on('track', ({ peerId, track }) => attachRemoteTrack(peerId, track)),
+        r.on('peer-state', ({ peerId, state }) => {
+          const tile = tiles.get(peerId);
+          if (!tile) return;
+          tile.conn.dataset.state = state;
+          tile.conn.title = state;
         }),
-        r.on('error', ({ error }) => options.onError?.(error)),
-        r.on('hangup', () => options.onHangup?.()),
+        r.on('error', ({ error }) => reportError(error)),
+        // External hangup (API, unload hook) also tears the UI down;
+        // dispose() is the single onHangup dispatch point.
+        r.on('hangup', () => dispose()),
       );
 
       if (options.autoJoin !== false) r.announce();
     })
     .catch((err) => {
-      options.onError?.(err instanceof Error ? err : new Error(String(err)));
+      reportError(err);
     });
 
   return {

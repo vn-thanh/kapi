@@ -73,23 +73,23 @@ export async function listDevices(): Promise<MediaDeviceInfo[]> {
   return navigator.mediaDevices.enumerateDevices();
 }
 
-export async function applyVideoCodecPreference(
-  pc: RTCPeerConnection,
+/**
+ * Prefer a codec on a specific transceiver. Applied before the first offer so
+ * the preference is already reflected in the generated SDP.
+ */
+export function applyVideoCodecPreference(
+  transceiver: RTCRtpTransceiver,
   mimeType: string,
-): Promise<void> {
+): void {
   const caps = RTCRtpSender.getCapabilities?.('video');
   if (!caps) return;
   const preferred = caps.codecs.filter((c) => c.mimeType.toLowerCase() === mimeType.toLowerCase());
   const rest = caps.codecs.filter((c) => c.mimeType.toLowerCase() !== mimeType.toLowerCase());
   if (!preferred.length) return;
-  for (const t of pc.getTransceivers()) {
-    if (t.sender.track?.kind === 'video' || t.receiver.track?.kind === 'video') {
-      try {
-        t.setCodecPreferences([...preferred, ...rest]);
-      } catch {
-        /* unsupported */
-      }
-    }
+  try {
+    transceiver.setCodecPreferences([...preferred, ...rest]);
+  } catch {
+    /* unsupported */
   }
 }
 

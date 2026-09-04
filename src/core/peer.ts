@@ -15,6 +15,10 @@ export class KapiPeer {
   makingOffer = false;
   ignoreOffer = false;
   private readonly polite: boolean;
+  private readonly videoCodec?: string;
+  private readonly maxBitrate?: number;
+  private readonly audioTransceiver: RTCRtpTransceiver;
+  private readonly videoTransceiver: RTCRtpTransceiver;
   private readonly audioSender: RTCRtpSender;
   private readonly videoSender: RTCRtpSender;
   /** ICE may arrive before setRemoteDescription — queue until ready. */
@@ -25,14 +29,23 @@ export class KapiPeer {
     iceServers: RTCIceServer[],
     polite: boolean,
     private readonly cb: PeerCallbacks,
+    opts: { videoCodec?: string; maxBitrate?: number } = {},
   ) {
     this.peerId = peerId;
     this.polite = polite;
+    this.videoCodec = opts.videoCodec;
+    this.maxBitrate = opts.maxBitrate;
     this.pc = new RTCPeerConnection({ iceServers });
     // Stable m-lines so replaceTrack (screen share / device switch) works even when
     // the peer joined without a camera or mic track.
-    this.audioSender = this.pc.addTransceiver('audio', { direction: 'sendrecv' }).sender;
-    this.videoSender = this.pc.addTransceiver('video', { direction: 'sendrecv' }).sender;
+    this.audioTransceiver = this.pc.addTransceiver('audio', { direction: 'sendrecv' });
+    this.videoTransceiver = this.pc.addTransceiver('video', { direction: 'sendrecv' });
+    this.audioSender = this.audioTransceiver.sender;
+    this.videoSender = this.videoTransceiver.sender;
+    // Apply codec preference once on the stored transceiver — scanning
+    // pc.getTransceivers() by track kind silently skips transceivers whose
+    // track is still null (e.g. audio-only join), so the option was ignored.
+    if (this.videoCodec) applyVideoCodecPreference(this.videoTransceiver, this.videoCodec);
     this.pc.onicecandidate = (e) => {
       if (e.candidate) this.cb.onIce(e.candidate.toJSON());
     };
@@ -59,28 +72,19 @@ export class KapiPeer {
     await sender.replaceTrack(track);
   }
 
-  async createAndSetOffer(
-    videoCodec?: string,
-    maxBitrate?: number,
-    iceRestart = false,
-  ): Promise<string> {
+  async createAndSetOffer(iceRestart = false): Promise<string> {
     this.makingOffer = true;
     try {
-      if (videoCodec) await applyVideoCodecPreference(this.pc, videoCodec);
       const offer = await this.pc.createOffer({ iceRestart });
       await this.pc.setLocalDescription(offer);
-      if (maxBitrate) await applyMaxBitrate(this.pc, maxBitrate);
+      if (this.maxBitrate) await applyMaxBitrate(this.pc, this.maxBitrate);
       return this.pc.localDescription!.sdp;
     } finally {
       this.makingOffer = false;
     }
   }
 
-  async handleOffer(
-    sdp: string,
-    videoCodec?: string,
-    maxBitrate?: number,
-  ): Promise<string | null> {
+  async handleOffer(sdp: string): Promise<string | null> {
     const offerCollision = this.makingOffer || this.pc.signalingState !== 'stable';
     this.ignoreOffer = !this.polite && offerCollision;
     if (this.ignoreOffer) return null;
@@ -100,10 +104,9 @@ export class KapiPeer {
 
     await this.pc.setRemoteDescription({ type: 'offer', sdp });
     await this.flushIce();
-    if (videoCodec) await applyVideoCodecPreference(this.pc, videoCodec);
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);
-    if (maxBitrate) await applyMaxBitrate(this.pc, maxBitrate);
+    if (this.maxBitrate) await applyMaxBitrate(this.pc, this.maxBitrate);
     return this.pc.localDescription!.sdp;
   }
 

@@ -68,6 +68,8 @@ export type RoomEventMap = {
   'peer-joined': { peerId: string; displayName?: string };
   'peer-left': { peerId: string };
   track: { peerId: string; track: MediaStreamTrack; streams: readonly MediaStream[] };
+  /** RTCPeerConnection state per remote peer — drive UI connection badges. */
+  'peer-state': { peerId: string; state: RTCPeerConnectionState };
   'local-stream': { stream: MediaStream };
   error: { error: Error };
   hangup: undefined;
