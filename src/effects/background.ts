@@ -98,6 +98,11 @@ export class BackgroundProcessor {
     await this.video.play();
     await waitForVideoDimensions(this.video);
 
+    // stop() (mode reset to 'none', hangup) can null the element while the
+    // awaits above were pending — bail with audio-only instead of reading
+    // videoWidth off null; the room's seq token discards the stale output.
+    if (!this.video) return new MediaStream(source.getAudioTracks());
+
     const w = this.video.videoWidth || 640;
     const h = this.video.videoHeight || 480;
     if (!this.canvas) {

@@ -500,6 +500,10 @@ export class KapiRoom {
 
   async setBackground(mode: BackgroundMode) {
     if (!this.rawCameraStream || this.closed) return;
+    // No camera → getLocalStream fell back to audio-only/empty. There is no
+    // video to composite a background onto; changing modes would just spin up
+    // a segmenter that waits 3s for dimensions that never arrive.
+    if (this.rawCameraStream.getVideoTracks().length === 0) return;
     const seq = ++this.backgroundSeq;
     this.currentBackground = mode;
 

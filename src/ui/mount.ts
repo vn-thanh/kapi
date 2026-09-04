@@ -551,7 +551,9 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   }
 
   function paintButton(b: HTMLButtonElement, id: ToolbarButton, text: string, mode: 'on' | 'off' | 'active' = 'on') {
-    const unavailable = (id === 'mic' || id === 'cam') && deviceMissing[id];
+    const unavailable =
+      (id === 'background' && deviceMissing.cam) ||
+      ((id === 'mic' || id === 'cam') && deviceMissing[id]);
     // An unavailable device replaces the toggle label ("Mute"/"Unmute") — a
     // mute tooltip on a button that cannot capture anything would be a lie.
     const label = unavailable ? (id === 'mic' ? labels.noMic : labels.noCam) : text;
@@ -581,6 +583,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         // Active while sharing (accent) — previously the button greyed out,
         // which read as "disabled" instead of "in progress".
         paintButton(b, id, room.sharing ? labels.stopShare : labels.share, room.sharing ? 'active' : 'on');
+      } else if (id === 'background') {
+        // Repaint on device re-check so a missing camera flips the button
+        // into the unavailable state live (hot-plug included).
+        paintButton(b, id, labels.background);
       }
     }
     const selfTile = tiles.get(selfId);
@@ -726,6 +732,12 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     },
     background: () => {
       if (!room) return;
+      // Compositing needs camera frames — with no camera, say so like mic/cam
+      // instead of spinning up a segmenter on an audio-only fallback stream.
+      if (deviceMissing.cam) {
+        showToast(labels.noCam);
+        return;
+      }
       const modes: Array<'none' | 'blur' | 'remove'> = ['none', 'blur', 'remove'];
       const cur = typeof bgMode === 'string' ? bgMode : 'none';
       const idx = Math.max(0, modes.indexOf(cur as 'none' | 'blur' | 'remove'));
