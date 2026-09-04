@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project is maintained by [release-please](https://github.com/googleapis/release-please) — future entries are generated automatically from Conventional Commits.
 
+## [1.1.0](https://github.com/vn-thanh/kapi/compare/v1.0.0...v1.1.0) (2026-09-04)
+
+
+### Features
+
+* collapse overflowing toolbar controls into a More menu ([8a2b183](https://github.com/vn-thanh/kapi/commit/8a2b18352e818fff931143556e9edde9e167c7df))
+
+
+### Bug Fixes
+
+* broadcast mic/cam state so remotes see the mute chip ([80fc833](https://github.com/vn-thanh/kapi/commit/80fc8336a7ac3cb7d1a15c72ae2a377256b58cdf))
+* lifecycle leaks and races around hangup and failed joins ([f43483d](https://github.com/vn-thanh/kapi/commit/f43483df6da180ed2b17b4159a7188377e3f4fb1))
+
 ## [Unreleased]
 
 ### Added
