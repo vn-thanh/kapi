@@ -47,6 +47,7 @@ room.setMic(false)
 room.setCam(true)
 await room.shareScreen(true)
 await room.setBackground('blur')
+room.sendReaction('👍') // Jitsi-style floating emoji, broadcast to everyone
 await room.hangup()
 ```
 
@@ -60,7 +61,7 @@ const api = mount(document.getElementById('meet')!, {
   peerId: crypto.randomUUID(),
   displayName: 'Ada',
   signal,
-  toolbar: ['mic', 'cam', 'share', 'participants', 'background', 'settings', 'hangup'],
+  toolbar: ['mic', 'cam', 'share', 'react', 'participants', 'background', 'settings', 'hangup'],
   onHangup: () => api.dispose(),
 })
 ```
@@ -75,6 +76,7 @@ type SignalMessage =
   | { type: 'leave'; peerId: string }
   | { type: 'offer' | 'answer'; sdp: string; to: string; from?: string }
   | { type: 'ice'; candidate: RTCIceCandidateInit; to: string; from?: string }
+  | { type: 'reaction'; emoji: string; from?: string }
   | { type: 'peers'; peers: { peerId: string; displayName?: string }[] }
 
 interface SignalAdapter {

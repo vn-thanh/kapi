@@ -278,10 +278,30 @@ roomB2.on('peer-state', ({ state }) => eventsB.states.push(state));
 await waitFor(() => eventsA.joined === 2, 'A sees re-join as fresh peer');
 assert(eventsA.left === 1, 'A dropped stale link first');
 
+// Reactions: local emit + broadcast through signaling.
+const reactionsA = [];
+const reactionsB = [];
+roomA.on('reaction', (r) => reactionsA.push(r));
+roomB2.on('reaction', (r) => reactionsB.push(r));
+roomA.sendReaction('👍');
+await waitFor(() => reactionsB.length >= 1, 'B receives A reaction');
+assert(
+  reactionsB[0].emoji === '👍' && reactionsB[0].peerId === 'a-first',
+  'remote reaction delivered with sender id',
+);
+assert(
+  reactionsA.length === 1 && reactionsA[0].peerId === 'a-first',
+  'local reaction echoed to sender',
+);
+roomA.sendReaction('   '); // invalid — ignored
+roomA.sendReaction('x'.repeat(30)); // too long — ignored
+await sleep(60);
+assert(reactionsB.length === 1, 'malformed reactions never delivered');
+
 await roomB2.hangup();
 await roomB.hangup();
 await waitFor(() => eventsA.left >= 2, 'A sees B leave');
 await roomA.hangup();
 
 assert(eventsA.errors.length === 0, 'A stayed error-free');
-console.log('ok: negotiation, tracks, rejoin, hangup');
+console.log('ok: negotiation, tracks, rejoin, reactions, hangup');

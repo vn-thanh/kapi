@@ -338,6 +338,14 @@ export class KapiRoom {
           if (peer) await peer.handleIce(msg.candidate);
           break;
         }
+        case 'reaction': {
+          // Cosmetic broadcast — never let a malformed one throw into the
+          // signaling chain.
+          const emoji = typeof msg.emoji === 'string' ? msg.emoji.trim() : '';
+          if (!emoji || emoji.length > 24) return;
+          this.emit('reaction', { peerId: msg.from ?? '', emoji });
+          break;
+        }
       }
     } catch (err) {
       this.emit('error', { error: err instanceof Error ? err : new Error(String(err)) });
@@ -493,6 +501,24 @@ export class KapiRoom {
     }
     this.applyCamState();
     this.emit('local-stream', { stream: this.localStream });
+  }
+
+  /**
+   * Broadcast an emoji reaction (Jitsi-style floating emojis). Also fires the
+   * `reaction` event locally with this room's peerId, so consumers render
+   * local + remote reactions from a single event stream. Invalid input is
+   * ignored rather than thrown — reactions are cosmetic.
+   */
+  sendReaction(emoji: string) {
+    if (this.closed) return;
+    const clean = typeof emoji === 'string' ? emoji.trim() : '';
+    if (!clean || clean.length > 24) return;
+    this.options.signal.send({
+      type: 'reaction',
+      emoji: clean,
+      from: this.options.peerId,
+    });
+    this.emit('reaction', { peerId: this.options.peerId, emoji: clean });
   }
 
   async switchDevice(kind: 'audioinput' | 'videoinput', deviceId: string) {

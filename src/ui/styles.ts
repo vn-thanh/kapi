@@ -294,6 +294,89 @@ export function injectStyles() {
   outline: 2px solid var(--kapi-accent, #3b82f6);
 }
 
+/* ---------- reactions (Jitsi-style) ---------- */
+.kapi-reaction-picker {
+  position: absolute;
+  bottom: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: var(--kapi-toolbar, rgba(13, 17, 23, 0.78));
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+.kapi-reaction-picker.hidden {
+  display: none;
+}
+.kapi-reaction-picker button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  cursor: pointer;
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.kapi-reaction-picker button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  transform: scale(1.18);
+}
+.kapi-reaction-picker button:active {
+  transform: scale(0.9);
+}
+.kapi-reaction-picker button:focus-visible {
+  outline: 2px solid var(--kapi-accent, #3b82f6);
+  outline-offset: 2px;
+}
+.kapi-reaction-float {
+  position: absolute;
+  bottom: 64px;
+  z-index: 5;
+  font-size: 30px;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+  animation-name: kapi-reaction-rise;
+  animation-timing-function: cubic-bezier(0.22, 0.75, 0.4, 1);
+  animation-fill-mode: forwards;
+}
+@keyframes kapi-reaction-rise {
+  0% {
+    transform: translate(0, 0) scale(0.5) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    transform: translate(calc(var(--kapi-drift, 0px) * 0.15), -14px)
+      scale(1.25) rotate(calc(var(--kapi-spin, 0deg) * 0.2));
+    opacity: 1;
+  }
+  22% {
+    transform: translate(calc(var(--kapi-drift, 0px) * 0.2), -40px)
+      scale(1) rotate(0deg);
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--kapi-drift, 0px), var(--kapi-rise, -320px))
+      scale(1) rotate(var(--kapi-spin, 0deg));
+    opacity: 0;
+  }
+}
+
 /* ---------- toast ---------- */
 .kapi-toast {
   position: absolute;

@@ -37,7 +37,7 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
 ```ts
 {
   ...roomOptions
-  toolbar?: Array<'mic'|'cam'|'share'|'participants'|'background'|'settings'|'hangup'>
+  toolbar?: Array<'mic'|'cam'|'share'|'react'|'participants'|'background'|'settings'|'hangup'>
   theme?: {
     bg?: string
     fg?: string
@@ -62,5 +62,6 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
 | `track` | `{ peerId, track, streams }` | Remote media arrived; merge tracks into one stream per peer (browser `streams` identity is unreliable across renegotiation). To hide video, don't rely on remote track `mute` alone — browsers fire it late or never when a sender stops sending (e.g. screen share stopped, `replaceTrack(null)`, disabled camera, w3c/webrtc-pc#3077) and the `<video>` would freeze on the last decoded frame. Treat "no presented frame for ~2s" (via `video.requestVideoFrameCallback`) as video-off; the built-in UI does this |
 | `peer-state` | `{ peerId, state }` | RTCPeerConnection state — drive connection badges |
 | `local-stream` | `{ stream }` | Local preview source; re-emitted on screen share, background, device switch |
+| `reaction` | `{ peerId, emoji }` | Emoji reaction — fired for remote arrivals AND for the local one sent via `room.sendReaction(emoji)`; the built-in UI floats it up the screen Jitsi-style |
 | `error` | `{ error }` | Recoverable errors (ICE exhausted, maxPeers, …) |
 | `hangup` | — | Room closed |

@@ -79,6 +79,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   pane.className = 'kapi-panel kapi-participants hidden';
   const settingsEl = document.createElement('div');
   settingsEl.className = 'kapi-panel kapi-settings hidden';
+  const reactPanel = document.createElement('div');
+  reactPanel.className = 'kapi-reaction-picker hidden';
   const toast = document.createElement('div');
   toast.className = 'kapi-toast hidden';
   toast.setAttribute('role', 'alert');
@@ -88,7 +90,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   soundGate.className = 'kapi-sound-gate hidden';
   soundGate.textContent = labels.enableSound;
 
-  root.append(grid, pane, settingsEl, bar, toast, soundGate);
+  root.append(grid, pane, settingsEl, reactPanel, bar, toast, soundGate);
   parent.appendChild(root);
 
   const tiles = new Map<string, Tile>();
@@ -398,6 +400,66 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     el.classList.toggle('hidden', !show);
   }
 
+  // ---------- reactions (Jitsi-style floating emojis) ----------
+
+  const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🎉', '👏', '👎'];
+  /** Cap concurrent floats so a reaction storm cannot flood the DOM. */
+  const MAX_FLOATS = 24;
+
+  function closeReactions() {
+    reactPanel.classList.add('hidden');
+  }
+
+  function toggleReactions() {
+    reactPanel.classList.toggle('hidden');
+  }
+
+  // Click-away closes the picker (pointerdown fires before click, so the
+  // react button and the picker itself are excluded to keep the toggle sane).
+  const onDocPointerForReactions = (e: Event) => {
+    if (reactPanel.classList.contains('hidden')) return;
+    const target = e.target;
+    if (target instanceof Element && (target.closest('.kapi-reaction-picker') || target.closest('button[data-id="react"]'))) {
+      return;
+    }
+    closeReactions();
+  };
+  document.addEventListener('pointerdown', onDocPointerForReactions);
+  unsubs.push(() => document.removeEventListener('pointerdown', onDocPointerForReactions));
+
+  for (const emoji of REACTIONS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = emoji;
+    b.title = emoji;
+    b.setAttribute('aria-label', emoji);
+    b.addEventListener('click', () => {
+      closeReactions();
+      if (room) room.sendReaction(emoji);
+      else spawnReactionFloat(emoji); // join still in flight — local feedback only
+    });
+    reactPanel.appendChild(b);
+  }
+
+  /** Rise-and-fade emoji, like Jitsi's reactions. Called for local picks (via
+   *  the room's own `reaction` emit) and for remote arrivals alike. */
+  function spawnReactionFloat(emoji: string) {
+    if (disposed) return;
+    const floats = root.querySelectorAll('.kapi-reaction-float');
+    if (floats.length >= MAX_FLOATS) floats[0]?.remove();
+    const el = document.createElement('span');
+    el.className = 'kapi-reaction-float';
+    el.textContent = emoji;
+    // Rise across (almost) the whole root from just above the toolbar.
+    el.style.left = `${(8 + Math.random() * 74).toFixed(1)}%`;
+    el.style.setProperty('--kapi-rise', `-${Math.max(160, root.clientHeight - 140)}px`);
+    el.style.setProperty('--kapi-drift', `${Math.round(Math.random() * 120 - 60)}px`);
+    el.style.setProperty('--kapi-spin', `${(Math.random() * 48 - 24).toFixed(0)}deg`);
+    el.style.animationDuration = `${(3.4 + Math.random() * 1.2).toFixed(2)}s`;
+    el.addEventListener('animationend', () => el.remove());
+    root.appendChild(el);
+  }
+
   function renderParticipants() {
     if (!room) return;
     pane.innerHTML = '';
@@ -565,6 +627,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         .catch(reportError)
         .finally(updateToolbarLabels);
     },
+    react: () => toggleReactions(),
     participants: () => {
       const opening = pane.classList.contains('hidden');
       if (opening) renderParticipants();
@@ -617,6 +680,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
           renderParticipants();
         }),
         r.on('track', ({ peerId, track }) => attachRemoteTrack(peerId, track)),
+        r.on('reaction', ({ emoji }) => spawnReactionFloat(emoji)),
         r.on('peer-state', ({ peerId, state }) => {
           const tile = tiles.get(peerId);
           if (!tile) return;

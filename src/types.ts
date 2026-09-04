@@ -8,6 +8,7 @@ export type SignalMessage =
   | { type: 'offer'; sdp: string; to: string; from?: string }
   | { type: 'answer'; sdp: string; to: string; from?: string }
   | { type: 'ice'; candidate: RTCIceCandidateInit; to: string; from?: string }
+  | { type: 'reaction'; emoji: string; from?: string }
   | { type: 'peers'; peers: SignalPeer[] };
 
 export interface SignalAdapter {
@@ -19,6 +20,7 @@ export type ToolbarButton =
   | 'mic'
   | 'cam'
   | 'share'
+  | 'react'
   | 'participants'
   | 'background'
   | 'settings'
@@ -71,6 +73,9 @@ export type RoomEventMap = {
   /** RTCPeerConnection state per remote peer — drive UI connection badges. */
   'peer-state': { peerId: string; state: RTCPeerConnectionState };
   'local-stream': { stream: MediaStream };
+  /** An emoji reaction — fired for remote arrivals AND for the local one
+   *  triggered by `sendReaction` (single stream for UI consumers). */
+  reaction: { peerId: string; emoji: string };
   error: { error: Error };
   hangup: undefined;
 };
@@ -93,6 +98,7 @@ export interface KapiUiLabels {
   camOff?: string;
   share?: string;
   stopShare?: string;
+  react?: string;
   participants?: string;
   background?: string;
   settings?: string;
