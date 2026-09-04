@@ -12,6 +12,8 @@ export class KapiPeer {
   makingOffer = false;
   ignoreOffer = false;
   private readonly polite: boolean;
+  private readonly audioSender: RTCRtpSender;
+  private readonly videoSender: RTCRtpSender;
 
   constructor(
     peerId: string,
@@ -22,6 +24,10 @@ export class KapiPeer {
     this.peerId = peerId;
     this.polite = polite;
     this.pc = new RTCPeerConnection({ iceServers });
+    // Stable m-lines so replaceTrack (screen share / device switch) works even when
+    // the peer joined without a camera or mic track.
+    this.audioSender = this.pc.addTransceiver('audio', { direction: 'sendrecv' }).sender;
+    this.videoSender = this.pc.addTransceiver('video', { direction: 'sendrecv' }).sender;
     this.pc.onicecandidate = (e) => {
       if (e.candidate) this.cb.onIce(e.candidate.toJSON());
     };
@@ -32,18 +38,15 @@ export class KapiPeer {
   }
 
   addLocalTracks(stream: MediaStream) {
-    for (const track of stream.getTracks()) {
-      const existing = this.pc.getSenders().find((s) => s.track?.kind === track.kind);
-      if (existing) void existing.replaceTrack(track);
-      else this.pc.addTrack(track, stream);
-    }
+    const audio = stream.getAudioTracks()[0];
+    const video = stream.getVideoTracks()[0];
+    if (audio) void this.audioSender.replaceTrack(audio);
+    if (video) void this.videoSender.replaceTrack(video);
   }
 
   async replaceTrack(kind: 'audio' | 'video', track: MediaStreamTrack | null) {
-    let sender = this.pc.getSenders().find((s) => s.track?.kind === kind);
-    if (!sender) sender = this.pc.getSenders().find((s) => !s.track);
-    if (sender) await sender.replaceTrack(track);
-    else if (track) this.pc.addTrack(track);
+    const sender = kind === 'audio' ? this.audioSender : this.videoSender;
+    await sender.replaceTrack(track);
   }
 
   async createAndSetOffer(videoCodec?: string, maxBitrate?: number): Promise<string> {

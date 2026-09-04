@@ -244,16 +244,30 @@ export class KapiRoom {
     if (enabled) {
       this.screenStream = await getDisplayStream();
       const track = this.screenStream.getVideoTracks()[0];
+      if (!track) throw new Error('getDisplayMedia returned no video track');
+      // Prefer quality for text/UI on shared screens
+      if ('contentHint' in track) track.contentHint = 'detail';
       track.onended = () => void this.shareScreen(false);
       await this.replaceVideoTrack(track);
+      // Some browsers need a re-offer after display-capture replace (esp. if
+      // the peer originally had no outbound video).
+      await this.renegotiateAll();
     } else {
       this.screenStream?.getTracks().forEach((t) => t.stop());
       this.screenStream = null;
-      const cam =
-        this.localStream?.getVideoTracks()[0] ??
-        this.rawCameraStream?.getVideoTracks()[0] ??
-        null;
-      await this.replaceVideoTrack(cam);
+      if (this.currentBackground !== 'none') {
+        await this.setBackground(this.currentBackground);
+      } else {
+        const cam = this.rawCameraStream?.getVideoTracks()[0] ?? null;
+        await this.replaceVideoTrack(cam);
+      }
+      await this.renegotiateAll();
+    }
+  }
+
+  private async renegotiateAll() {
+    for (const id of [...this.peers.keys()]) {
+      await this.negotiate(id);
     }
   }
 
@@ -261,15 +275,20 @@ export class KapiRoom {
     for (const peer of this.peers.values()) {
       await peer.replaceTrack('video', track);
     }
-    if (this.localStream && track) {
-      const old = this.localStream.getVideoTracks()[0];
-      if (old && old !== track) {
-        this.localStream.removeTrack(old);
-        this.localStream.addTrack(track);
-      } else if (!old) {
-        this.localStream.addTrack(track);
-      }
-      this.emit('local-stream', { stream: this.localStream });
+    // Keep local preview on a dedicated stream so we never mutate the camera /
+    // canvas stream that peers may still reference after stopping share.
+    if (track) {
+      const preview = new MediaStream([
+        track,
+        ...(this.localStream?.getAudioTracks() ??
+          this.rawCameraStream?.getAudioTracks() ??
+          []),
+      ]);
+      this.localStream = preview;
+      this.emit('local-stream', { stream: preview });
+    } else {
+      this.localStream = this.rawCameraStream;
+      if (this.rawCameraStream) this.emit('local-stream', { stream: this.rawCameraStream });
     }
   }
 

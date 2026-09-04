@@ -146,6 +146,14 @@
     </div>
     <div id="meet"></div>
 
+    <!-- Bare ESM demo: browsers cannot resolve npm package names without a map. -->
+    <script type="importmap">
+      {
+        "imports": {
+          "@mediapipe/tasks-vision": "/node_modules/@mediapipe/tasks-vision/vision_bundle.mjs"
+        }
+      }
+    </script>
     <script type="module">
       import { createBroadcastSignalAdapter } from '/dist/index.js';
       import { mount } from '/dist/ui/index.js';

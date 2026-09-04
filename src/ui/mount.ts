@@ -236,10 +236,21 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
           if (!stream) {
             stream = new MediaStream();
             remoteStreams.set(peerId, stream);
+          } else {
+            remoteStreams.set(peerId, stream);
           }
           if (!stream.getTracks().includes(track)) stream.addTrack(track);
           const meta = r.participants.find((p) => p.peerId === peerId);
-          ensureTile(peerId, meta?.displayName ?? peerId, stream);
+          const video = ensureTile(peerId, meta?.displayName ?? peerId, stream);
+          // replaceTrack (screen share) keeps the same receiver track; force the
+          // <video> to pick up resolution / content changes.
+          const refresh = () => {
+            if (video.srcObject !== stream) video.srcObject = stream;
+            void video.play().catch(() => undefined);
+          };
+          track.addEventListener('unmute', refresh);
+          track.addEventListener('resize', refresh);
+          refresh();
         }),
         r.on('error', ({ error }) => options.onError?.(error)),
         r.on('hangup', () => options.onHangup?.()),

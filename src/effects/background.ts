@@ -1,4 +1,3 @@
-import { FilesetResolver, ImageSegmenter, type ImageSegmenterResult } from '@mediapipe/tasks-vision';
 import { DEFAULT_MODEL_URL } from '../options';
 import type { BackgroundMode } from '../types';
 
@@ -7,9 +6,15 @@ export type BackgroundProcessorOptions = {
   blurAmount?: number;
 };
 
+type ImageSegmenter = import('@mediapipe/tasks-vision').ImageSegmenter;
+type ImageSegmenterResult = import('@mediapipe/tasks-vision').ImageSegmenterResult;
+
 /**
  * Camera → MediaPipe selfie mask → canvas composite → captureStream.
  * ponytail: one segmenter on the main thread; move to Worker if FPS drops.
+ *
+ * MediaPipe is loaded lazily on first background effect so bare-module demos
+ * can join a call without an import map until blur/remove is used.
  */
 export class BackgroundProcessor {
   private segmenter: ImageSegmenter | null = null;
@@ -38,6 +43,7 @@ export class BackgroundProcessor {
     }
 
     if (!this.segmenter) {
+      const { FilesetResolver, ImageSegmenter } = await import('@mediapipe/tasks-vision');
       const vision = await FilesetResolver.forVisionTasks(
         'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/wasm',
       );
@@ -59,6 +65,7 @@ export class BackgroundProcessor {
     }
     this.video.srcObject = source;
     await this.video.play();
+    await waitForVideoDimensions(this.video);
 
     const w = this.video.videoWidth || 640;
     const h = this.video.videoHeight || 480;
@@ -105,8 +112,19 @@ export class BackgroundProcessor {
   private loop = () => {
     if (!this.running || !this.video || !this.canvas || !this.ctx || !this.segmenter) return;
     const now = performance.now();
-    if (this.video.readyState >= 2 && now !== this.lastTs) {
+    // Skip until the element has a real frame — MediaPipe GPU path throws
+    // "texImage2D: no video" when width/height are still 0.
+    if (
+      this.video.readyState >= 2 &&
+      this.video.videoWidth > 0 &&
+      this.video.videoHeight > 0 &&
+      now !== this.lastTs
+    ) {
       this.lastTs = now;
+      if (this.canvas.width !== this.video.videoWidth || this.canvas.height !== this.video.videoHeight) {
+        this.canvas.width = this.video.videoWidth;
+        this.canvas.height = this.video.videoHeight;
+      }
       try {
         this.segmenter.segmentForVideo(this.video, now, (result) => this.paint(result));
       } catch {
@@ -182,6 +200,21 @@ export class BackgroundProcessor {
     this.ctx.putImageData(out, 0, 0);
     mask.close();
   }
+}
+
+function waitForVideoDimensions(video: HTMLVideoElement, timeoutMs = 3000): Promise<void> {
+  if (video.videoWidth > 0 && video.videoHeight > 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      video.removeEventListener('loadeddata', done);
+      video.removeEventListener('resize', done);
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    video.addEventListener('loadeddata', done);
+    video.addEventListener('resize', done);
+  });
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
