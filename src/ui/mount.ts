@@ -129,6 +129,35 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     }
   }, 1000);
 
+  // ---------- device availability ----------
+
+  /** A missing device flips its toolbar button into an "unavailable" state
+   *  (dimmed, explanatory tooltip, click → toast) instead of leaving a
+   *  toggle that silently does nothing. Re-checked on `devicechange` so
+   *  hot-plugging a camera/mic restores the button live. */
+  const deviceMissing: Record<'mic' | 'cam', boolean> = { mic: false, cam: false };
+
+  async function refreshDeviceAvailability() {
+    if (disposed || !room) return;
+    const md = navigator.mediaDevices;
+    if (!md?.enumerateDevices) {
+      // Insecure context or ancient browser — nothing can ever be captured.
+      deviceMissing.mic = true;
+      deviceMissing.cam = true;
+      updateToolbarLabels();
+      return;
+    }
+    let devices: MediaDeviceInfo[] = [];
+    try {
+      devices = await md.enumerateDevices();
+    } catch {
+      return; // unknown state — leave the buttons as they are
+    }
+    deviceMissing.mic = !devices.some((d) => d.kind === 'audioinput');
+    deviceMissing.cam = !devices.some((d) => d.kind === 'videoinput');
+    updateToolbarLabels();
+  }
+
   // ---------- toast / errors ----------
 
   function showToast(text: string, isError = true) {
@@ -453,6 +482,15 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   document.addEventListener('pointerdown', onDocPointerForReactions);
   unsubs.push(() => document.removeEventListener('pointerdown', onDocPointerForReactions));
 
+  // Hot-plug: plugging in a camera/mic mid-call restores its toolbar button
+  // (and unplugging dims it) without a reload.
+  const onDeviceChange = () => void refreshDeviceAvailability();
+  const md = navigator.mediaDevices;
+  if (md?.addEventListener) {
+    md.addEventListener('devicechange', onDeviceChange);
+    unsubs.push(() => md.removeEventListener('devicechange', onDeviceChange));
+  }
+
   for (const emoji of REACTIONS) {
     const b = document.createElement('button');
     b.type = 'button';
@@ -513,12 +551,20 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   }
 
   function paintButton(b: HTMLButtonElement, id: ToolbarButton, text: string, mode: 'on' | 'off' | 'active' = 'on') {
-    b.title = text;
-    b.setAttribute('aria-label', text);
+    const unavailable = (id === 'mic' || id === 'cam') && deviceMissing[id];
+    // An unavailable device replaces the toggle label ("Mute"/"Unmute") — a
+    // mute tooltip on a button that cannot capture anything would be a lie.
+    const label = unavailable ? (id === 'mic' ? labels.noMic : labels.noCam) : text;
+    b.title = label;
+    b.setAttribute('aria-label', label);
     b.setAttribute('aria-pressed', mode === 'off' ? 'false' : 'true');
+    b.setAttribute('aria-disabled', unavailable ? 'true' : 'false');
     b.innerHTML = toolbarIconHtml(id, mode === 'off');
-    b.classList.toggle('is-off', mode === 'off');
-    b.classList.toggle('is-active', mode === 'active');
+    // The unavailable look wins over the on/off/accent paints, so the button
+    // reads as "not usable here" rather than as another toggle state.
+    b.classList.toggle('is-off', mode === 'off' && !unavailable);
+    b.classList.toggle('is-active', mode === 'active' && !unavailable);
+    b.classList.toggle('is-unavailable', unavailable);
   }
 
   function updateToolbarLabels() {
@@ -582,6 +628,15 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         sel.appendChild(opt);
       }
       if (!foundCurrent && sel.options.length) sel.selectedIndex = 0;
+      // Nothing to pick — name the absence instead of rendering a dead dropdown.
+      if (!sel.options.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.disabled = true;
+        opt.selected = true;
+        opt.textContent = kind === 'audioinput' ? labels.noMic : labels.noCam;
+        sel.appendChild(opt);
+      }
       sel.addEventListener('change', () => onPick(sel.value));
       wrap.appendChild(sel);
       settingsEl.appendChild(wrap);
@@ -639,11 +694,20 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   const actions: Record<ToolbarButton, () => void> = {
     mic: () => {
       if (!room) return;
+      // No hardware → say so instead of flipping a state that changes nothing.
+      if (deviceMissing.mic) {
+        showToast(labels.noMic);
+        return;
+      }
       room.setMic(!room.micOn);
       updateToolbarLabels();
     },
     cam: () => {
       if (!room) return;
+      if (deviceMissing.cam) {
+        showToast(labels.noCam);
+        return;
+      }
       room.setCam(!room.camOn);
       updateToolbarLabels();
     },
@@ -694,6 +758,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       room = r;
       options.onReady?.(r);
       updateToolbarLabels();
+      void refreshDeviceAvailability();
       if (r.localMedia) attachLocalStream(r.localMedia);
 
       unsubs.push(

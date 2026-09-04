@@ -222,6 +222,19 @@ export function injectStyles() {
   color: #fff;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--kapi-accent, #3b82f6) 30%, transparent);
 }
+/* No such device on this machine — visibly dead, not another toggle state. */
+.kapi-toolbar button.is-unavailable {
+  opacity: 0.38;
+  cursor: not-allowed;
+  filter: grayscale(1);
+  box-shadow: none;
+}
+.kapi-toolbar button.is-unavailable:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.kapi-toolbar button.is-unavailable:active {
+  transform: none;
+}
 .kapi-toolbar button[data-id='hangup'] {
   background: var(--kapi-danger, #ef4444);
 }

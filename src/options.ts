@@ -33,8 +33,10 @@ export const DEFAULT_THEME: Required<KapiUiTheme> = {
 export const DEFAULT_LABELS: Required<KapiUiLabels> = {
   micOn: 'Mute',
   micOff: 'Unmute',
+  noMic: 'No microphone found',
   camOn: 'Stop video',
   camOff: 'Start video',
+  noCam: 'No camera found',
   share: 'Share screen',
   stopShare: 'Stop sharing',
   react: 'React',

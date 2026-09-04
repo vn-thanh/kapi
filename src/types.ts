@@ -104,8 +104,12 @@ export interface KapiUiTheme {
 export interface KapiUiLabels {
   micOn?: string;
   micOff?: string;
+  /** Tooltip for the mic button when no audioinput device exists. */
+  noMic?: string;
   camOn?: string;
   camOff?: string;
+  /** Tooltip for the cam button when no videoinput device exists. */
+  noCam?: string;
   share?: string;
   stopShare?: string;
   react?: string;
