@@ -62,8 +62,16 @@ export class BackgroundProcessor {
           delegate: 'GPU',
         },
         runningMode: 'VIDEO',
-        outputCategoryMask: true,
-        outputConfidenceMasks: false,
+        // Confidence masks, not the category mask: for single-channel selfie
+        // models MediaPipe emits the FOREGROUND (person) probability in
+        // confidence channel 0, while the *category* mask is the inverted one
+        // (person = 0, background = 255 — MediaPipe's own postprocessor maps
+        // `0.5 as the cutoff, assigning 0 (foreground) or 255 (background)`,
+        // segmentation_postprocessor_gl.cc / tensors_to_segmentation_calculator.cc).
+        // Basing the composite on the category mask blurred the person
+        // instead of the background.
+        outputCategoryMask: false,
+        outputConfidenceMasks: true,
       });
     })();
     this.segmenter = await this.segmenterReady;
@@ -190,8 +198,8 @@ export class BackgroundProcessor {
     if (!video || !canvas || !ctx) return;
     const w = canvas.width;
     const h = canvas.height;
-    const mask = result.categoryMask;
-    if (!mask) {
+    const masks = result.confidenceMasks;
+    if (!masks || !masks.length) {
       ctx.drawImage(video, 0, 0, w, h);
       return;
     }
@@ -210,21 +218,38 @@ export class BackgroundProcessor {
       ctx.fillRect(0, 0, w, h);
     }
 
-    // 2. Rasterize the category mask (0 = background, >0 = person) into an
-    //    alpha channel. The mask is small; only this loop is per-pixel.
+    // 2. Rasterize the person's confidence into an alpha channel. Channel 0
+    //    holds the FOREGROUND (person) probability for single-channel selfie
+    //    models; multi-channel models (multiclass selfie, deeplab) list
+    //    background first, so the person is the max of the remaining
+    //    channels. The float confidence doubles as soft alpha — smoother
+    //    person edges than the binary category mask.
     if (!this.maskCanvas) {
       this.maskCanvas = document.createElement('canvas');
       this.maskCtx = this.maskCanvas.getContext('2d');
     }
-    const mw = mask.width;
-    const mh = mask.height;
+    const primary = masks[0]!;
+    const mw = primary.width;
+    const mh = primary.height;
     if (this.maskCanvas.width !== mw) this.maskCanvas.width = mw;
     if (this.maskCanvas.height !== mh) this.maskCanvas.height = mh;
     const maskRgba = this.maskCtx!.createImageData(mw, mh);
-    const maskData = mask.getAsUint8Array();
-    for (let i = 0; i < maskData.length; i++) {
-      const alpha = maskData[i]! > 0 ? 255 : 0;
-      maskRgba.data[i * 4 + 3] = alpha;
+    const channels = masks.map((m) => m.getAsFloat32Array());
+    const singleChannel = channels.length === 1;
+    for (let i = 0; i < channels[0]!.length; i++) {
+      let person: number;
+      if (singleChannel) {
+        // Channel 0 = person (foreground) probability.
+        person = channels[0]![i]!;
+      } else {
+        // Multiclass: background is channel 0; person = any other class.
+        person = 0;
+        for (let c = 1; c < channels.length; c++) {
+          const v = channels[c]![i]!;
+          if (v > person) person = v;
+        }
+      }
+      maskRgba.data[i * 4 + 3] = Math.min(1, Math.max(0, person)) * 255;
     }
     this.maskCtx!.putImageData(maskRgba, 0, 0);
 
@@ -245,7 +270,7 @@ export class BackgroundProcessor {
     pctx.globalCompositeOperation = 'source-over';
 
     ctx.drawImage(this.personCanvas, 0, 0);
-    mask.close();
+    for (const m of masks) m.close();
   }
 }
 
