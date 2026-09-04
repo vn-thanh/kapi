@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Browser WebRTC P2P mesh calls — no media server, pluggable signaling, optional background removal",
   "license": "MIT",
-  "author": "vn-thanh",
+  "author": "Thanh Vu <108888676+vn-thanh@users.noreply.github.com>",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
