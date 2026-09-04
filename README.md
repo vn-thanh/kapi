@@ -1,0 +1,124 @@
+# @vn-thanh/kapi
+
+Browser **WebRTC P2P mesh** calls — no media SFU/MCU. You supply signaling (Socket.IO, BroadcastChannel, …). Optional client-side background blur/remove via MediaPipe.
+
+## Install
+
+```bash
+npm install @vn-thanh/kapi
+# or local path while unpublished:
+# npm install /path/to/kapi
+```
+
+## Headless
+
+```ts
+import { KapiRoom, createBroadcastSignalAdapter } from '@vn-thanh/kapi'
+
+const peerId = crypto.randomUUID()
+const signal = createBroadcastSignalAdapter('demo-room', peerId)
+
+const room = await KapiRoom.join({
+  roomId: 'demo',
+  peerId,
+  displayName: 'Ada',
+  signal,
+  // iceServers: [...], // default: Google STUN; add TURN for strict NATs
+  maxPeers: 6,
+  effects: { background: 'none' }, // 'blur' | 'remove' | { image: url }
+})
+
+room.on('track', ({ peerId, streams }) => {
+  videoEl.srcObject = streams[0]
+})
+
+room.setMic(false)
+room.setCam(true)
+await room.shareScreen(true)
+await room.setBackground('blur')
+await room.hangup()
+```
+
+## UI mount
+
+```ts
+import { mount } from '@vn-thanh/kapi/ui'
+
+const api = mount(document.getElementById('meet')!, {
+  roomId: 'demo',
+  peerId: crypto.randomUUID(),
+  displayName: 'Ada',
+  signal,
+  toolbar: ['mic', 'cam', 'share', 'participants', 'background', 'settings', 'hangup'],
+  onHangup: () => api.dispose(),
+})
+```
+
+## Signaling contract
+
+Host implements `SignalAdapter`:
+
+```ts
+type SignalMessage =
+  | { type: 'join'; peerId: string; displayName?: string }
+  | { type: 'leave'; peerId: string }
+  | { type: 'offer' | 'answer'; sdp: string; to: string; from?: string }
+  | { type: 'ice'; candidate: RTCIceCandidateInit; to: string; from?: string }
+  | { type: 'peers'; peers: { peerId: string; displayName?: string }[] }
+
+interface SignalAdapter {
+  send(msg: SignalMessage): void
+  onMessage(fn: (msg: SignalMessage) => void): () => void
+}
+```
+
+Relay `offer` / `answer` / `ice` to `to`. Broadcast `join` / `leave`. Optionally send `peers` snapshot on join.
+
+Helpers: `createBroadcastSignalAdapter`, `createLocalSignalBus`.
+
+## Options
+
+| Option | Default | Notes |
+|--------|---------|--------|
+| `iceServers` | Google STUN | Add TURN for corporate NAT |
+| `maxPeers` | `6` | Mesh cost is O(n²) |
+| `media.audio` / `media.video` | `true` | `getUserMedia` constraints |
+| `effects.background` | `'none'` | `'blur'` \| `'remove'` \| `{ image }` |
+| `effects.modelUrl` | MediaPipe selfie CDN | Override model path |
+| `effects.blurAmount` | `12` | CSS blur px |
+| `polite` | `true` | Perfect negotiation |
+| `maxBitrate` | — | Video sender max bps |
+| `videoCodec` | — | e.g. `video/VP8` |
+| `autoJoin` | `true` | Emit `join` on start |
+
+UI: `toolbar`, `theme` (CSS vars), `labels`, `onHangup`, `onReady`, `onError`.
+
+## Limits
+
+- No media server → each peer uploads to every other peer.
+- Keep rooms small (`maxPeers`).
+- HTTPS (or localhost) required for camera/mic.
+- Background effects need WebGL/GPU; first load downloads the model.
+
+## Scripts
+
+```bash
+npm run typecheck
+npm run build
+npm run check
+```
+
+## Publish (later)
+
+```bash
+npm login
+npm publish --access public
+```
+
+Repository: https://github.com/vn-thanh/kapi
+
+## Docs
+
+- [OPTIONS.md](docs/OPTIONS.md) — full option reference
+- [SIGNALING.md](docs/SIGNALING.md) — host signaling contract
+- Cursor skill: `.cursor/skills/integrate-kapi/SKILL.md`

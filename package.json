@@ -1,0 +1,66 @@
+{
+  "name": "@vn-thanh/kapi",
+  "version": "0.1.0",
+  "description": "Browser WebRTC P2P mesh calls — no media server, pluggable signaling, optional background removal",
+  "license": "MIT",
+  "author": "vn-thanh",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "import": "./dist/ui/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vn-thanh/kapi.git"
+  },
+  "homepage": "https://github.com/vn-thanh/kapi#readme",
+  "bugs": {
+    "url": "https://github.com/vn-thanh/kapi/issues"
+  },
+  "keywords": [
+    "webrtc",
+    "p2p",
+    "mesh",
+    "video-call",
+    "audio-call",
+    "background-removal",
+    "kapi"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": [
+    "./dist/ui/index.js"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run typecheck && npm run build",
+    "self-check": "npm run build && node examples/self-check.mjs"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.21"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

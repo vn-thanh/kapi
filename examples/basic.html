@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>kapi basic example</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0a0a0a;
+        color: #eee;
+        font-family: system-ui, sans-serif;
+      }
+      #app {
+        height: 100%;
+      }
+      .hint {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        z-index: 10;
+        font-size: 12px;
+        opacity: 0.8;
+        background: rgba(0, 0, 0, 0.6);
+        padding: 6px 10px;
+        border-radius: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="hint">
+      Open this page in two tabs (HTTPS or localhost). Same BroadcastChannel room.
+    </div>
+    <div id="app"></div>
+    <script type="module">
+      import { createBroadcastSignalAdapter } from '../dist/index.js';
+      import { mount } from '../dist/ui/index.js';
+
+      const params = new URLSearchParams(location.search);
+      const roomId = params.get('room') || 'kapi-demo';
+      const peerId = params.get('peer') || crypto.randomUUID();
+      const displayName = params.get('name') || `User-${peerId.slice(0, 4)}`;
+
+      const signal = createBroadcastSignalAdapter(`kapi:${roomId}`, peerId);
+
+      mount(document.getElementById('app'), {
+        roomId,
+        peerId,
+        displayName,
+        signal,
+        onError: (e) => console.error(e),
+      });
+
+      // Self-check: signal round-trip within this tab via second adapter is N/A;
+      // assert mount DOM exists.
+      console.assert(document.querySelector('.kapi-root'), 'kapi UI mounted');
+    </script>
+  </body>
+</html>
