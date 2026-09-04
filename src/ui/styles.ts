@@ -133,8 +133,11 @@ export function injectStyles() {
   overflow-x: auto;
 }
 .kapi-root.layout-spotlight .kapi-strip .kapi-tile {
-  flex: 1 0 150px;
+  /* Fixed-ratio thumbs (Zoom/Meet filmstrip) — stretching to fill the strip
+     used to produce huge letterboxed tiles when few peers were present. */
+  flex: none;
   height: 100%;
+  aspect-ratio: 16 / 9;
 }
 .kapi-root.layout-sidebar .kapi-main {
   flex-direction: row;
@@ -148,7 +151,9 @@ export function injectStyles() {
   overflow-y: auto;
 }
 .kapi-root.layout-sidebar .kapi-strip .kapi-tile {
-  flex: 1 0 120px;
+  flex: none;
+  width: 100%;
+  aspect-ratio: 16 / 9;
 }
 .kapi-tile.video-off video {
   opacity: 0;

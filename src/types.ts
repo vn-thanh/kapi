@@ -25,7 +25,15 @@ export type SignalMessage =
       cam?: boolean;
       to?: string;
       from?: string;
-    };
+    }
+  /**
+   * Receiver → sender hint: how large the sender's video renders on the
+   * receiver's screen, in device px (Jitsi-style receiver constraint, mesh
+   * flavor — applied per connection). Lets the sender stop encoding
+   * resolution nobody sees. Cosmetic: relays that drop it only lose the
+   * optimization, media is unaffected. Older receivers ignore it.
+   */
+  | { type: 'video-hint'; to: string; width: number; height: number; from?: string };
 
 export interface SignalAdapter {
   send(msg: SignalMessage): void;
@@ -71,8 +79,18 @@ export interface KapiRoomOptions {
   effects?: KapiEffectsOptions;
   /** Prefer lower peerId as polite peer (perfect negotiation). Default true. */
   polite?: boolean;
-  /** Max video bitrate bps (applied when sender exists). */
+  /** Max video bitrate bps applied when a sender exists. With `adaptive`
+   *  on (the default), acts as a hard cap over the adaptive rung bitrate. */
   maxBitrate?: number;
+  /**
+   * Automatic per-connection video quality (default true) — Zoom/Jitsi-style:
+   * steps resolution / bitrate / framerate down while the link reports
+   * bandwidth/CPU limitation, back up when it recovers, never exceeds the
+   * resolution each receiver actually renders (`video-hint`), and keeps
+   * screen shares at full resolution with low fps. Set false to disable the
+   * stat/hint engine and only honor `maxBitrate`.
+   */
+  adaptive?: boolean;
   /** Preferred video codec mime, e.g. video/VP8 */
   videoCodec?: string;
   autoJoin?: boolean;

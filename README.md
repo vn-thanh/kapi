@@ -285,12 +285,13 @@ io.on('connection', (socket) => {
 |--------|---------|--------|
 | `iceServers` | Google STUN | Add TURN for corporate NATs |
 | `maxPeers` | `6` | Mesh upload cost is O(n²) per peer |
-| `media.audio` / `media.video` | `true` | Any `getUserMedia` constraints |
+| `media.audio` / `media.video` | `true` (video → 720p-ideal) | Any `getUserMedia` constraints |
 | `effects.background` | `'none'` | `'blur'` \| `'remove'` \| `{ image }` |
 | `effects.blurAmount` | `12` | CSS blur px |
 | `effects.modelUrl` | MediaPipe CDN | Self-host the segmenter model |
 | `polite` | `true` | Perfect-negotiation glare handling |
-| `maxBitrate` | — | Video sender cap (bps) |
+| `maxBitrate` | — | Video sender cap (bps); hard cap when `adaptive` is on |
+| `adaptive` | `true` | Auto video quality: resolution/bitrate/fps follow link health and each receiver's tile size; screen share stays sharp at low fps |
 | `videoCodec` | — | e.g. `'video/VP8'` |
 | `autoJoin` | `true` | Emit `join` immediately |
 | `leaveOnUnload` | `true` | Instant leave on tab close / refresh |
@@ -310,6 +311,7 @@ npm run typecheck    # tsc --noEmit
 npm run build        # tsup → dist/
 npm run check        # typecheck + build
 npm run self-check   # build + headless negotiation/layout checks
+npm run release      # self-check + npm publish — publish from this machine
 npm run demo         # build + demo server on :5179
 npm run demo:serve   # serve only (dist must exist)
 ```
@@ -324,6 +326,12 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
 4. The `publish` workflow then runs `npm run check` and publishes to **npm** (requires the `NPM_TOKEN` repository secret)
 
 No manual version bumps, no manual changelogs.
+
+**CI unavailable?** Publish from this machine instead (npm must be logged in — `npm whoami`):
+
+1. Bump the version in `package.json` **and** `.release-please-manifest.json`, add the CHANGELOG entry.
+2. `npm run release` — builds, runs the headless checks, then `npm publish` (`prepublishOnly` re-runs typecheck + build).
+3. `git tag vX.Y.Z && git push origin vX.Y.Z` to mark the release. Skip creating a GitHub Release — the `publish` workflow would fail re-publishing the same version.
 
 ## 🤝 Contributing
 

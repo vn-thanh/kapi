@@ -163,6 +163,49 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     }),
   );
 
+  // ---------- receiver video hints (Jitsi-style receiver constraints) ----------
+  // Tell each remote sender how large its tile renders here (device px), so
+  // a filmstrip thumbnail stops receiving 720p nobody sees. Event-driven
+  // (ResizeObserver + layout switches), debounced, and skipped under 64px
+  // drift — no per-tick spam.
+
+  const hintsOn = options.adaptive !== false;
+  /** Last size hinted per remote peer — resend only on a real change. */
+  const lastHint = new Map<string, { w: number; h: number }>();
+  let hintTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function sendHints() {
+    if (!room || disposed) return;
+    const dpr = window.devicePixelRatio || 1;
+    for (const [peerId, tile] of tiles) {
+      if (peerId === selfId || !tile.wrap.isConnected) continue;
+      // Screen shares and camera-off tiles gain nothing from downscaling —
+      // the sender keeps its share profile and sends nothing anyway.
+      if (tile.wrap.classList.contains('screenshare')) continue;
+      if (tile.wrap.classList.contains('video-off')) continue;
+      const w = Math.round(tile.wrap.clientWidth * dpr);
+      const h = Math.round(tile.wrap.clientHeight * dpr);
+      if (!w || !h) continue;
+      const prev = lastHint.get(peerId);
+      if (prev && Math.abs(prev.w - w) < 64 && Math.abs(prev.h - h) < 64) continue;
+      lastHint.set(peerId, { w, h });
+      room.sendVideoHint(peerId, w, h);
+    }
+  }
+
+  function scheduleHints() {
+    if (!hintsOn || disposed) return;
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(sendHints, 400);
+  }
+
+  const hintRo = new ResizeObserver(scheduleHints);
+  unsubs.push(() => {
+    hintRo.disconnect();
+    clearTimeout(hintTimer);
+    lastHint.clear();
+  });
+
   // ---------- frozen-frame watchdog ----------
 
   // Re-evaluate every tile once a second: if a video element still holds a
@@ -255,7 +298,11 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
   // ---------- tiles ----------
 
-  /** Column/row math for grid mode only. */
+  /** Column/row math for grid mode only. Zoom-style: try every column count
+   *  and keep the one whose 16:9-ish cells cover the most area — the old
+   *  1/2/3 lookup ignored container aspect and produced tall letterboxed
+   *  tiles on wide screens. Screen-share rows (2.5× a camera row) are part
+   *  of the height budget. */
   function sizeGrid() {
     let shares = 0;
     let cams = 0;
@@ -263,9 +310,22 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       if (tile.wrap.classList.contains('screenshare')) shares++;
       else cams++;
     }
-    // Stage tiles span the full grid width, so columns only need to fit the
-    // remaining (camera) tiles.
-    const cols = cams <= 1 ? 1 : cams <= 4 ? 2 : 3;
+    // grid is display:none in spotlight/sidebar — clientWidth is 0 then.
+    const w = grid.clientWidth - 24;
+    const h = grid.clientHeight - 24;
+    let cols = 1;
+    let bestTw = 0;
+    if (cams > 0 && w > 0 && h > 0) {
+      for (let c = 1; c <= cams; c++) {
+        const camRows = Math.ceil(cams / c);
+        const rowH = (h - (camRows + shares - 1) * 10) / (2.5 * shares + camRows);
+        const tw = Math.min((w - (c - 1) * 10) / c, rowH * (16 / 9));
+        if (tw > bestTw) {
+          bestTw = tw;
+          cols = c;
+        }
+      }
+    }
     const camRows = Math.ceil(cams / cols);
     // Size rows explicitly: auto rows sized themselves to the video's
     // intrinsic resolution (e.g. 1280×720) and blew out of the grid. Stage
@@ -297,6 +357,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     if (layoutMode === 'grid') {
       grid.append(...[...tiles.values()].map((t) => t.wrap));
       sizeGrid();
+      scheduleHints();
       return;
     }
     const featured = pickFeatured();
@@ -304,6 +365,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     if (featured) stage.append(featured.wrap);
     const rest = [...tiles.values()].filter((t) => t !== featured).map((t) => t.wrap);
     if (rest.length) strip.append(...rest);
+    // Tiles moved between stage/strip/grid sizes — re-hint the senders.
+    scheduleHints();
   }
 
   function setLayout(mode: KapiLayout) {
@@ -384,6 +447,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
     wrap.append(video, avatar, meta);
     grid.appendChild(wrap);
+    hintRo.observe(wrap);
     tile = {
       wrap,
       video,
@@ -589,6 +653,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   function removeTile(peerId: string) {
     const tile = tiles.get(peerId);
     if (!tile) return;
+    hintRo.unobserve(tile.wrap);
+    lastHint.delete(peerId);
     if (tile.frameHandle !== null) tile.video.cancelVideoFrameCallback(tile.frameHandle);
     tile.video.srcObject = null;
     tile.wrap.remove();
@@ -979,7 +1045,13 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   document.addEventListener('keydown', onKeyForOverflow);
   unsubs.push(() => document.removeEventListener('keydown', onKeyForOverflow));
 
-  const toolbarRo = new ResizeObserver(() => layoutToolbar());
+  // Root resize: re-fit the toolbar, re-pick grid columns (Zoom-style area
+  // math is aspect-sensitive), and re-hint senders about new tile sizes.
+  const toolbarRo = new ResizeObserver(() => {
+    layoutToolbar();
+    if (!disposed && layoutMode === 'grid') sizeGrid();
+    scheduleHints();
+  });
   unsubs.push(() => toolbarRo.disconnect());
 
   // ---------- lifecycle ----------

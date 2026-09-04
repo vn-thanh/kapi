@@ -35,6 +35,8 @@ export class KapiRoom {
   private readonly pendingNegotiation = new Map<string, { iceRestart?: boolean }>();
   private readonly restartAttempts = new Map<string, number>();
   private readonly restartTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Adaptive quality ticker (3s) — null when `adaptive: false`. */
+  private qualityTimer: ReturnType<typeof setInterval> | null = null;
   /** Bound once so start/hangup can add/remove the same unload listener. */
   private readonly onPageUnload = () => {
     // hangup()'s body is fully synchronous, so the `leave` message is queued
@@ -151,6 +153,14 @@ export class KapiRoom {
         this.announce();
       }, 0);
     }
+
+    // Adaptive quality: each link steps its video encoding down on sustained
+    // bandwidth/CPU limitation and back up when the pressure clears.
+    if (this.options.adaptive) {
+      this.qualityTimer = setInterval(() => {
+        for (const peer of this.peers.values()) void peer.sampleVideoQuality();
+      }, 3000);
+    }
   }
 
   /** Send room join (roster / presence). Safe to call once after wiring events. */
@@ -231,6 +241,7 @@ export class KapiRoom {
     }, {
       videoCodec: this.options.videoCodec,
       maxBitrate: this.options.maxBitrate,
+      adaptive: this.options.adaptive,
     });
 
     if (this.localStream) await peer.addLocalTracks(this.localStream);
@@ -381,6 +392,17 @@ export class KapiRoom {
           this.emit('reaction', { peerId: msg.from ?? '', emoji });
           break;
         }
+        case 'video-hint': {
+          // Rendered-size hint from a receiver (Jitsi receiver constraint,
+          // mesh flavor). Cosmetic optimization — validate and drop malformed
+          // ones like reactions, so a bad hint never breaks the chain.
+          const from = msg.from;
+          if (!from || msg.to !== this.options.peerId) return;
+          if (!Number.isFinite(msg.width) || !Number.isFinite(msg.height)) return;
+          const peer = this.peers.get(from);
+          if (peer) peer.setVideoHint(msg.width, msg.height);
+          break;
+        }
         case 'media-state': {
           // Cosmetic hint for remote UIs (mute chip, camera-off, share stage)
           // — malformed ones are ignored like reactions.
@@ -518,6 +540,22 @@ export class KapiRoom {
     }
   }
 
+  /**
+   * Tell a peer how large its video renders on our screen (device px), so it
+   * can stop sending resolution nobody sees — Jitsi receiver constraints for
+   * a mesh. The built-in UI calls this automatically from tile measurements.
+   */
+  sendVideoHint(toPeerId: string, width: number, height: number) {
+    if (this.closed || !this.options.adaptive) return;
+    this.options.signal.send({
+      type: 'video-hint',
+      to: toPeerId,
+      from: this.options.peerId,
+      width: Math.round(width),
+      height: Math.round(height),
+    });
+  }
+
   private async restoreCameraTrack() {
     if (this.closed) return;
     if (this.currentBackground !== 'none') {
@@ -531,10 +569,15 @@ export class KapiRoom {
   }
 
   private async replaceVideoTrack(track: MediaStreamTrack | null) {
+    const sharing = !!this.screenStream;
     for (const [id, peer] of this.peers) {
+      // Share swaps the quality profile first (full res / low fps), then the
+      // track; capture size can also change on a device switch → resync.
+      peer.setScreenSharing(sharing);
       // Renegotiate when the transceiver direction/m-line changed (e.g. a
       // peer that had no outbound video starts screen sharing).
       if (await peer.replaceTrack('video', track)) await this.negotiate(id);
+      void peer.syncVideoParams();
     }
     // Keep local preview on a dedicated stream so we never mutate the camera /
     // canvas stream that peers may still reference after stopping share.
@@ -693,6 +736,10 @@ export class KapiRoom {
     this.options.signal.send({ type: 'leave', peerId: this.options.peerId });
     this.unsubSignal?.();
     this.unsubSignal = null;
+    if (this.qualityTimer !== null) {
+      clearInterval(this.qualityTimer);
+      this.qualityTimer = null;
+    }
     for (const timer of this.restartTimers.values()) clearTimeout(timer);
     this.restartTimers.clear();
     this.pendingNegotiation.clear();

@@ -14,7 +14,9 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
   maxPeers?: number          // default 6
   media?: {
     audio?: boolean | MediaTrackConstraints
-    video?: boolean | MediaTrackConstraints
+    video?: boolean | MediaTrackConstraints  // bare true/omitted defaults to
+                                             // 720p-ideal (caps 1080p/4K webcams,
+                                             // never blocks lower-default cams)
   }
   effects?: {
     background?: 'none' | 'blur' | 'remove' | { image: string }
@@ -22,7 +24,13 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
     blurAmount?: number      // default 12
   }
   polite?: boolean           // default true
-  maxBitrate?: number
+  maxBitrate?: number        // with adaptive on (default), a hard cap over the rung bitrate
+  adaptive?: boolean         // default true — per-connection video quality engine:
+                             // steps resolution/bitrate/fps down while the link reports
+                             // bandwidth/CPU limitation (Zoom/Jitsi-style), back up when
+                             // it recovers, never sends more resolution than the receiver's
+                             // tile renders ('video-hint' message), keeps screen shares
+                             // full-res at low fps. Set false for pre-1.x static behavior.
   videoCodec?: string        // e.g. 'video/VP8'
   autoJoin?: boolean         // default true
   leaveOnUnload?: boolean    // default true — send `leave` on pagehide/beforeunload

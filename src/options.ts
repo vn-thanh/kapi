@@ -7,6 +7,17 @@ export const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
 
 export const DEFAULT_MAX_PEERS = 6;
 
+/**
+ * Capture ceiling when the caller passes `video: true`: 720p keeps modern
+ * 1080p/4K webcams from burning CPU and uplink on pixels the mesh rarely
+ * needs. `ideal` (not `exact`/`max`) — lower-default cameras are untouched
+ * and the adaptive engine scales down from whatever it gets.
+ */
+const DEFAULT_VIDEO: MediaTrackConstraints = {
+  width: { ideal: 1280 },
+  height: { ideal: 720 },
+};
+
 export const DEFAULT_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
 
@@ -66,6 +77,7 @@ export function resolveRoomOptions(opts: KapiRoomOptions): Required<
     | 'polite'
     | 'autoJoin'
     | 'leaveOnUnload'
+    | 'adaptive'
   >
 > &
   KapiRoomOptions {
@@ -76,7 +88,12 @@ export function resolveRoomOptions(opts: KapiRoomOptions): Required<
     maxPeers: opts.maxPeers ?? DEFAULT_MAX_PEERS,
     media: {
       audio: opts.media?.audio ?? true,
-      video: opts.media?.video ?? true,
+      // Explicit constraints pass through untouched; bare `true`/omitted gets
+      // the 720p-ideal ceiling.
+      video:
+        opts.media?.video === undefined || opts.media?.video === true
+          ? DEFAULT_VIDEO
+          : opts.media.video,
     },
     effects: {
       background: opts.effects?.background ?? 'none',
@@ -86,5 +103,6 @@ export function resolveRoomOptions(opts: KapiRoomOptions): Required<
     polite: opts.polite ?? true,
     autoJoin: opts.autoJoin ?? true,
     leaveOnUnload: opts.leaveOnUnload ?? true,
+    adaptive: opts.adaptive ?? true,
   };
 }

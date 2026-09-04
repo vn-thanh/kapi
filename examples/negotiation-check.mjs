@@ -10,18 +10,19 @@
 // ---------- fake WebRTC/DOM globals (Node has none) ----------
 
 class FakeTrack {
-  constructor(kind) {
+  constructor(kind, settings) {
     this.kind = kind;
     this.id = `${kind}-${Math.random().toString(36).slice(2, 8)}`;
     this.enabled = true;
     this.muted = false;
     this.readyState = 'live';
+    this._settings = settings ?? {};
   }
   stop() {
     this.readyState = 'ended';
   }
   getSettings() {
-    return {};
+    return this._settings;
   }
   addEventListener() {}
   removeEventListener() {}
@@ -56,11 +57,29 @@ class FakeTransceiver {
     this.stopped = false;
     this.sender = {
       track: null,
+      _params: null,
       replaceTrack: async (t) => {
         this.sender.track = t;
       },
-      getParameters: () => ({ encodings: [{}] }),
-      setParameters: async () => {},
+      getParameters: () =>
+        this.sender._params
+          ? JSON.parse(JSON.stringify(this.sender._params))
+          : { encodings: [{}] },
+      setParameters: async (p) => {
+        this.sender._params = JSON.parse(JSON.stringify(p));
+      },
+      // Test knob: set globalThis.__kapiQualityReason to simulate link pressure.
+      getStats: async () =>
+        new Map([
+          [
+            'out',
+            {
+              type: 'outbound-rtp',
+              kind: 'video',
+              qualityLimitationReason: globalThis.__kapiQualityReason ?? 'none',
+            },
+          ],
+        ]),
     };
     this.receiver = { track: null };
   }
@@ -331,5 +350,79 @@ assert(eventsA.errors.length === 0, 'A stayed error-free');
   assert(answers.length === 0, 'hung-up room must not answer');
   assert(cJoins === 0, 'hung-up room must not gain a peer');
   assert(cErrors.length === 0, `C error-free (got ${cErrors.join('; ')})`);
+}
+
+// Adaptive video quality (peer level): rung stepping from stats, receiver
+// rendered-size hints, screen-share profile, maxBitrate hard cap.
+{
+  const { KapiPeer } = await import('../dist/index.js');
+  const noop = { onIce() {}, onTrack() {} };
+  const peer = new KapiPeer('remote', [], true, noop, { adaptive: true });
+  await peer.addLocalTracks(
+    new FakeMediaStream([new FakeTrack('video', { width: 1280, height: 720 })]),
+  );
+  const enc = () =>
+    peer.pc.getTransceivers().find((t) => t.kind === 'video').sender._params?.encodings?.[0] ??
+    {};
+
+  await peer.syncVideoParams();
+  assert(
+    enc().scaleResolutionDownBy === 1 && enc().maxBitrate === 1500000,
+    `default rung is full quality (got ${JSON.stringify(enc())})`,
+  );
+
+  // Receiver renders us as a thumbnail → low rung; back to big → full rung.
+  peer.setVideoHint(300, 170);
+  await sleep(0);
+  assert(
+    enc().scaleResolutionDownBy === 4 && enc().maxBitrate === 250000,
+    'thumbnail hint drops to the low rung',
+  );
+  peer.setVideoHint(4000, 4000);
+  await sleep(0);
+  assert(enc().scaleResolutionDownBy === 1, 'large-tile hint restores full rung');
+
+  // Sustained bandwidth limitation steps down with hysteresis; clean
+  // samples step back up (slower).
+  globalThis.__kapiQualityReason = 'bandwidth';
+  await peer.sampleVideoQuality();
+  assert(enc().scaleResolutionDownBy === 1, 'one limited tick must not step down');
+  await peer.sampleVideoQuality();
+  assert(
+    enc().scaleResolutionDownBy === 2 && enc().maxBitrate === 600000,
+    'two limited ticks step down a rung',
+  );
+  globalThis.__kapiQualityReason = 'none';
+  for (let i = 0; i < 8; i++) await peer.sampleVideoQuality();
+  assert(enc().scaleResolutionDownBy === 1, 'clean streak steps back up');
+
+  // Screen share keeps full res at low fps, ignoring hint and limitation.
+  peer.setVideoHint(300, 170);
+  globalThis.__kapiQualityReason = 'bandwidth';
+  await peer.sampleVideoQuality(); // sharing suppresses sampling below
+  peer.setScreenSharing(true);
+  await sleep(0);
+  assert(
+    enc().scaleResolutionDownBy === 1 &&
+      enc().maxFramerate === 10 &&
+      enc().maxBitrate === 3000000,
+    'share profile: full resolution, low fps',
+  );
+
+  // maxBitrate acts as a hard cap over the rung bitrate.
+  const capped = new KapiPeer('remote2', [], true, noop, {
+    adaptive: true,
+    maxBitrate: 900000,
+  });
+  await capped.addLocalTracks(new FakeMediaStream([new FakeTrack('video')]));
+  await capped.syncVideoParams();
+  const cappedEnc = capped.pc
+    .getTransceivers()
+    .find((t) => t.kind === 'video').sender._params.encodings[0];
+  assert(cappedEnc.maxBitrate === 900000, 'maxBitrate caps the rung bitrate');
+
+  peer.close();
+  capped.close();
+  console.log('ok: adaptive video rungs, receiver hints, share profile, bitrate cap');
 }
 console.log('ok: negotiation, tracks, rejoin, reactions, hangup, mid-offer hangup');

@@ -146,12 +146,36 @@ async function main() {
     assert.equal(s.grid, 0, 'grid emptied in spotlight');
     assert.equal(s.stage, 1, 'one featured tile on stage');
     assert.equal(s.strip, 1, 'one tile in filmstrip');
+    // Filmstrip thumbs keep 16:9 (Zoom/Meet style) instead of stretching
+    // to fill the strip.
+    const stripRatio = await pageObj.evaluate(() => {
+      const t = document
+        .querySelectorAll('.kapi-root')[0]
+        .querySelector('.kapi-strip > .kapi-tile');
+      const r = t.getBoundingClientRect();
+      return r.height > 0 ? r.width / r.height : 0;
+    });
+    assert.ok(
+      Math.abs(stripRatio - 16 / 9) < 0.05,
+      `spotlight filmstrip thumb is 16:9 (got ${stripRatio.toFixed(2)})`,
+    );
 
     await clickLayout();
     s = await state(0);
     assert.deepEqual(s.modes, ['layout-sidebar'], 'sidebar class after second cycle');
     assert.equal(s.stage, 1, 'one featured tile on stage (sidebar)');
     assert.equal(s.strip, 1, 'one tile in side strip');
+    const sideRatio = await pageObj.evaluate(() => {
+      const t = document
+        .querySelectorAll('.kapi-root')[0]
+        .querySelector('.kapi-strip > .kapi-tile');
+      const r = t.getBoundingClientRect();
+      return r.height > 0 ? r.width / r.height : 0;
+    });
+    assert.ok(
+      Math.abs(sideRatio - 16 / 9) < 0.05,
+      `sidebar strip thumb is 16:9 (got ${sideRatio.toFixed(2)})`,
+    );
 
     await clickLayout();
     s = await state(0);
