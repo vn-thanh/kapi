@@ -9,6 +9,7 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
   roomId: string
   peerId: string
   displayName?: string
+  avatarUrl?: string        // image URL for tile/roster when video is off
   signal: SignalAdapter
   iceServers?: RTCIceServer[]
   maxPeers?: number          // default 6
@@ -90,7 +91,7 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
 
 | Event | Payload | Notes |
 |-------|---------|-------|
-| `peer-joined` | `{ peerId, displayName? }` | Presence + peer connection created |
+| `peer-joined` | `{ peerId, displayName?, avatarUrl? }` | Presence + peer connection created |
 | `peer-left` | `{ peerId }` | Link torn down / `leave` received |
 | `track` | `{ peerId, track, streams }` | Remote media arrived; merge tracks into one stream per peer (browser `streams` identity is unreliable across renegotiation). To hide video, don't rely on remote track `mute` alone — browsers fire it late or never when a sender stops sending (e.g. screen share stopped, `replaceTrack(null)`, disabled camera, w3c/webrtc-pc#3077) and the `<video>` would freeze on the last decoded frame. Treat "no presented frame for ~2s" (via `video.requestVideoFrameCallback`) as video-off; the built-in UI does this |
 | `peer-state` | `{ peerId, state }` | RTCPeerConnection state — drive connection badges |

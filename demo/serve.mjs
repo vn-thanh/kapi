@@ -41,6 +41,7 @@ const MIME = {
 /**
  * @typedef {{
  *   displayName?: string,
+ *   avatarUrl?: string,
  *   joined: boolean,
  *   queue: object[],
  *   waiters: Array<(msgs: object[]) => void>,
@@ -204,12 +205,17 @@ async function handleSignalPost(req, res) {
 
     if (message.type === 'join') {
       peer.displayName = message.displayName;
+      peer.avatarUrl = message.avatarUrl;
       peer.joined = true;
       const room = getRoom(roomId);
       // Joiner offers to everyone already in the room (full mesh, one offer per link).
       const peers = [...room.entries()]
         .filter(([id, p]) => id !== peerId && p.joined)
-        .map(([id, p]) => ({ peerId: id, displayName: p.displayName }));
+        .map(([id, p]) => ({
+          peerId: id,
+          displayName: p.displayName,
+          avatarUrl: p.avatarUrl,
+        }));
       if (peers.length) deliver(peer, { type: 'peers', peers });
       // Others only learn presence (library does not offer on `join`).
       forward(roomId, peerId, message);

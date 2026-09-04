@@ -90,6 +90,7 @@ The fastest way to a working call UI — `mount` gives you tiles, a toolbar, lay
     roomId: 'team-standup',
     peerId,
     displayName: 'Ada',
+    avatarUrl: 'https://example.com/ada.png', // optional — tile/roster when video off
     signal: createBroadcastSignalAdapter('team-standup', peerId),
     layout: 'spotlight',
     onHangup: () => api.dispose(),
@@ -162,7 +163,7 @@ await room.hangup()
 
 | Event | Payload | Use it for |
 |---|---|---|
-| `peer-joined` | `{ peerId, displayName? }` | Adding a tile / roster entry |
+| `peer-joined` | `{ peerId, displayName?, avatarUrl? }` | Adding a tile / roster entry |
 | `peer-left` | `{ peerId }` | Removing a tile |
 | `track` | `{ peerId, track, streams }` | Rendering remote media |
 | `peer-state` | `{ peerId, state }` | Connection status badges |
@@ -234,12 +235,12 @@ interface SignalAdapter {
 }
 
 type SignalMessage =
-  | { type: 'join'; peerId: string; displayName?: string }
+  | { type: 'join'; peerId: string; displayName?: string; avatarUrl?: string }
   | { type: 'leave'; peerId: string }
   | { type: 'offer' | 'answer'; sdp: string; to: string; from?: string }
   | { type: 'ice'; candidate: RTCIceCandidateInit; to: string; from?: string }
   | { type: 'reaction'; emoji: string; from?: string }
-  | { type: 'peers'; peers: { peerId: string; displayName?: string }[] }
+  | { type: 'peers'; peers: { peerId: string; displayName?: string; avatarUrl?: string }[] }
   | { type: 'media-state'; peerId: string; sharing: boolean; mic?: boolean; cam?: boolean; to?: string }
 ```
 

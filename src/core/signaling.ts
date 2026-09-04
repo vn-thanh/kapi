@@ -1,11 +1,13 @@
-import type { SignalAdapter, SignalMessage } from '../types';
+import type { SignalAdapter, SignalMessage, SignalPeer } from '../types';
+
+type RosterMeta = Pick<SignalPeer, 'displayName' | 'avatarUrl'>;
 
 /** Tiny in-process bus for demos / tests (same-page peers). */
 export function createLocalSignalBus(): {
   createAdapter(peerId: string): SignalAdapter;
 } {
   const listeners = new Map<string, Set<(msg: SignalMessage) => void>>();
-  const roster = new Map<string, string | undefined>();
+  const roster = new Map<string, RosterMeta>();
 
   return {
     createAdapter(peerId: string): SignalAdapter {
@@ -18,11 +20,14 @@ export function createLocalSignalBus(): {
               : msg;
 
           if (msg.type === 'join') {
-            roster.set(peerId, msg.displayName);
+            roster.set(peerId, {
+              displayName: msg.displayName,
+              avatarUrl: msg.avatarUrl,
+            });
             // Snapshot for the joiner (full mesh: joiner offers to existing).
             const peers = [...roster.entries()]
               .filter(([id]) => id !== msg.peerId)
-              .map(([id, displayName]) => ({ peerId: id, displayName }));
+              .map(([id, meta]) => ({ peerId: id, ...meta }));
             if (peers.length) {
               listeners.get(msg.peerId)?.forEach((fn) => fn({ type: 'peers', peers }));
             }
@@ -56,8 +61,8 @@ export function createBroadcastSignalAdapter(
   const bc = new BroadcastChannel(channelName);
   const handlers = new Set<(msg: SignalMessage) => void>();
   /** Other peers we have seen in this channel. */
-  const roster = new Map<string, string | undefined>();
-  let myDisplayName: string | undefined;
+  const roster = new Map<string, RosterMeta>();
+  let myMeta: RosterMeta = {};
   /** Only introduce ourselves while our room is actually joined — after
    *  hangup() (no page unload) replying here made joiners offer into the
    *  void, leaving a permanent ghost tile eating a maxPeers slot. */
@@ -74,7 +79,10 @@ export function createBroadcastSignalAdapter(
     if ('to' in msg && msg.to && msg.to !== peerId) return;
 
     if (msg.type === 'join') {
-      roster.set(msg.peerId, msg.displayName);
+      roster.set(msg.peerId, {
+        displayName: msg.displayName,
+        avatarUrl: msg.avatarUrl,
+      });
       // Each live tab introduces ITSELF to the joiner, who then offers.
       // Previously every tab forwarded its whole cached roster — crashed tabs
       // never send `leave` on BroadcastChannel, so ghosts accumulated and each
@@ -82,7 +90,7 @@ export function createBroadcastSignalAdapter(
       if (joined) {
         bc.postMessage({
           type: 'peers',
-          peers: [{ peerId, displayName: myDisplayName }],
+          peers: [{ peerId, displayName: myMeta.displayName, avatarUrl: myMeta.avatarUrl }],
           _from: peerId,
           _to: msg.peerId,
         });
@@ -100,7 +108,7 @@ export function createBroadcastSignalAdapter(
   return {
     send(msg) {
       if (msg.type === 'join') {
-        myDisplayName = msg.displayName;
+        myMeta = { displayName: msg.displayName, avatarUrl: msg.avatarUrl };
         joined = true;
       } else if (msg.type === 'leave') {
         joined = false;

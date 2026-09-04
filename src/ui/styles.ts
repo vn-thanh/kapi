@@ -190,6 +190,17 @@ export function injectStyles() {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   user-select: none;
 }
+.kapi-avatar-initials[hidden] {
+  display: none;
+}
+.kapi-avatar-img {
+  width: clamp(56px, 8vw, 88px);
+  height: clamp(56px, 8vw, 88px);
+  border-radius: 999px;
+  object-fit: cover;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  background: var(--kapi-tile, #1c2128);
+}
 .kapi-tile-meta {
   position: absolute;
   left: 0;
@@ -475,6 +486,28 @@ export function injectStyles() {
   height: 8px;
   border-radius: 999px;
   background: #22c55e;
+}
+.kapi-roster-avatar,
+.kapi-roster-initials {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+}
+.kapi-roster-avatar {
+  object-fit: cover;
+  background: var(--kapi-tile, #1c2128);
+}
+.kapi-roster-initials {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--kapi-accent, #3b82f6), #7c3aed);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  user-select: none;
 }
 .kapi-roster-mute {
   margin-left: auto;

@@ -393,12 +393,62 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     setPinned(pinnedPeer === peerId ? null : peerId);
   }
 
-  function ensureTile(peerId: string, label: string): Tile {
+  /** Paint a custom image avatar, or fall back to initials. Passing
+   *  `undefined` with `keepIfOmitted` leaves a previously-set image alone
+   *  (e.g. track attach that only knows the peer id). */
+  function applyAvatar(
+    tile: Tile,
+    avatarUrl: string | undefined,
+    name: string,
+    keepIfOmitted = false,
+  ) {
+    const chip = tile.avatar.querySelector('.kapi-avatar-initials') as HTMLSpanElement | null;
+    let img = tile.avatar.querySelector('.kapi-avatar-img') as HTMLImageElement | null;
+
+    if (avatarUrl === undefined && keepIfOmitted) {
+      if (chip && !img) chip.textContent = initials(name);
+      return;
+    }
+
+    const url = avatarUrl?.trim() || '';
+    if (!url) {
+      img?.remove();
+      if (chip) {
+        chip.hidden = false;
+        chip.textContent = initials(name);
+      }
+      return;
+    }
+
+    if (!img) {
+      img = document.createElement('img');
+      img.className = 'kapi-avatar-img';
+      img.alt = '';
+      img.decoding = 'async';
+      img.referrerPolicy = 'no-referrer';
+      img.addEventListener('error', () => {
+        img?.remove();
+        if (chip) {
+          chip.hidden = false;
+          chip.textContent = initials(name);
+        }
+      });
+      tile.avatar.appendChild(img);
+    }
+    if (img.getAttribute('src') !== url) img.setAttribute('src', url);
+    if (chip) chip.hidden = true;
+  }
+
+  function ensureTile(peerId: string, label: string, avatarUrl?: string): Tile {
     let tile = tiles.get(peerId);
     if (tile) {
       tile.label.textContent = label;
-      const chip = tile.avatar.querySelector('.kapi-avatar-initials');
-      if (chip) chip.textContent = initials(label);
+      applyAvatar(
+        tile,
+        avatarUrl,
+        peerId === selfId ? selfName : label,
+        avatarUrl === undefined,
+      );
       return tile;
     }
     const wrap = document.createElement('div');
@@ -460,6 +510,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       frameHandle: null,
     };
     tiles.set(peerId, tile);
+    applyAvatar(tile, avatarUrl, peerId === selfId ? selfName : label);
     const pending = pendingMediaState.get(peerId);
     if (pending) {
       pendingMediaState.delete(peerId);
@@ -517,9 +568,11 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
   function attachLocalStream(stream: MediaStream) {
     speakers.watch(selfId, stream);
-    const tile = ensureTile(selfId, selfName === labels.you ? labels.you : `${selfName} (${labels.you})`);
-    const chip = tile.avatar.querySelector('.kapi-avatar-initials');
-    if (chip) chip.textContent = initials(selfName);
+    const tile = ensureTile(
+      selfId,
+      selfName === labels.you ? labels.you : `${selfName} (${labels.you})`,
+      options.avatarUrl,
+    );
     if (tile.video.srcObject !== stream) {
       tile.video.srcObject = stream;
       // New source: old frames no longer count as "flowing".
@@ -553,7 +606,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     const stream = mergeRemoteTrack(peerId, track);
     speakers.watch(peerId, stream);
     const meta = room?.participants.find((p) => p.peerId === peerId);
-    const tile = ensureTile(peerId, meta?.displayName ?? peerId);
+    const tile = ensureTile(peerId, meta?.displayName ?? peerId, meta?.avatarUrl);
     if (tile.video.srcObject !== stream) {
       tile.video.srcObject = stream;
       // New source: old frames no longer count as "flowing".
@@ -769,14 +822,33 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     const ul = document.createElement('ul');
     for (const p of room.participants) {
       const li = document.createElement('li');
-      const dot = document.createElement('span');
-      dot.className = 'kapi-dot';
-      const name = document.createElement('span');
-      name.textContent =
+      const display =
         p.peerId === selfId
           ? `${p.displayName ?? p.peerId} (${labels.you})`
           : (p.displayName ?? p.peerId);
-      li.append(dot, name);
+      const name = document.createElement('span');
+      name.textContent = display;
+      const avatarUrl = p.avatarUrl?.trim();
+      if (avatarUrl) {
+        const img = document.createElement('img');
+        img.className = 'kapi-roster-avatar';
+        img.alt = '';
+        img.decoding = 'async';
+        img.referrerPolicy = 'no-referrer';
+        img.src = avatarUrl;
+        img.addEventListener('error', () => {
+          const chip = document.createElement('span');
+          chip.className = 'kapi-roster-initials';
+          chip.textContent = initials(p.displayName ?? p.peerId);
+          img.replaceWith(chip);
+        });
+        li.append(img, name);
+      } else {
+        const chip = document.createElement('span');
+        chip.className = 'kapi-roster-initials';
+        chip.textContent = initials(p.displayName ?? p.peerId);
+        li.append(chip, name);
+      }
       const muted =
         p.peerId === selfId ? !(room.micOn) : peerMicOn.get(p.peerId) === false;
       if (muted) {
@@ -1169,8 +1241,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
       unsubs.push(
         r.on('local-stream', ({ stream }) => attachLocalStream(stream)),
-        r.on('peer-joined', ({ peerId, displayName }) => {
-          ensureTile(peerId, displayName ?? peerId);
+        r.on('peer-joined', ({ peerId, displayName, avatarUrl }) => {
+          ensureTile(peerId, displayName ?? peerId, avatarUrl);
           renderParticipants();
         }),
         r.on('peer-left', ({ peerId }) => {

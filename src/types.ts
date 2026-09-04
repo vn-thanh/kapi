@@ -1,9 +1,14 @@
 export type BackgroundMode = 'none' | 'blur' | 'remove' | { image: string };
 
-export type SignalPeer = { peerId: string; displayName?: string };
+export type SignalPeer = {
+  peerId: string;
+  displayName?: string;
+  /** Optional image URL shown on the tile / roster when video is off. */
+  avatarUrl?: string;
+};
 
 export type SignalMessage =
-  | { type: 'join'; peerId: string; displayName?: string }
+  | { type: 'join'; peerId: string; displayName?: string; avatarUrl?: string }
   | { type: 'leave'; peerId: string }
   | { type: 'offer'; sdp: string; to: string; from?: string }
   | { type: 'answer'; sdp: string; to: string; from?: string }
@@ -72,6 +77,10 @@ export interface KapiRoomOptions {
   roomId: string;
   peerId: string;
   displayName?: string;
+  /** Image URL for this peer's avatar (tile + roster when video is off).
+   *  Relayed via `join` / `peers`; hosts should use HTTPS (or same-origin)
+   *  URLs that peers can fetch without CORS issues. */
+  avatarUrl?: string;
   signal: SignalAdapter;
   iceServers?: RTCIceServer[];
   maxPeers?: number;
@@ -107,7 +116,7 @@ export interface KapiRoomOptions {
 }
 
 export type RoomEventMap = {
-  'peer-joined': { peerId: string; displayName?: string };
+  'peer-joined': { peerId: string; displayName?: string; avatarUrl?: string };
   'peer-left': { peerId: string };
   track: { peerId: string; track: MediaStreamTrack; streams: readonly MediaStream[] };
   /** RTCPeerConnection state per remote peer — drive UI connection badges. */

@@ -68,7 +68,11 @@ export class KapiRoom {
 
   get participants(): SignalPeer[] {
     return [
-      { peerId: this.options.peerId, displayName: this.options.displayName },
+      {
+        peerId: this.options.peerId,
+        displayName: this.options.displayName,
+        avatarUrl: this.options.avatarUrl,
+      },
       ...this.peerMeta.values(),
     ];
   }
@@ -170,6 +174,7 @@ export class KapiRoom {
       type: 'join',
       peerId: this.options.peerId,
       displayName: this.options.displayName,
+      avatarUrl: this.options.avatarUrl,
     });
   }
 
@@ -178,11 +183,30 @@ export class KapiRoom {
     return this.options.peerId < remoteId;
   }
 
-  private async ensurePeer(remoteId: string, displayName?: string): Promise<KapiPeer | null> {
+  private mergePeerMeta(
+    remoteId: string,
+    meta?: Pick<SignalPeer, 'displayName' | 'avatarUrl'>,
+  ): SignalPeer {
+    const prev = this.peerMeta.get(remoteId);
+    const next: SignalPeer = {
+      peerId: remoteId,
+      displayName: meta?.displayName ?? prev?.displayName,
+      avatarUrl: meta?.avatarUrl ?? prev?.avatarUrl,
+    };
+    this.peerMeta.set(remoteId, next);
+    return next;
+  }
+
+  private async ensurePeer(
+    remoteId: string,
+    meta?: Pick<SignalPeer, 'displayName' | 'avatarUrl'>,
+  ): Promise<KapiPeer | null> {
     if (remoteId === this.options.peerId || this.closed) return null;
     let peer = this.peers.get(remoteId);
     if (peer) {
-      if (displayName) this.peerMeta.set(remoteId, { peerId: remoteId, displayName });
+      if (meta && (meta.displayName !== undefined || meta.avatarUrl !== undefined)) {
+        this.mergePeerMeta(remoteId, meta);
+      }
       return peer;
     }
 
@@ -252,8 +276,12 @@ export class KapiRoom {
       return null;
     }
     this.peers.set(remoteId, peer);
-    this.peerMeta.set(remoteId, { peerId: remoteId, displayName });
-    this.emit('peer-joined', { peerId: remoteId, displayName });
+    const stored = this.mergePeerMeta(remoteId, meta);
+    this.emit('peer-joined', {
+      peerId: remoteId,
+      displayName: stored.displayName,
+      avatarUrl: stored.avatarUrl,
+    });
     // Late joiners never saw earlier broadcasts — send the current mic/cam/
     // share snapshot targeted so relays route it to them only.
     this.broadcastMediaState(remoteId);
@@ -340,7 +368,10 @@ export class KapiRoom {
           if (this.peers.has(msg.peerId)) this.removePeer(msg.peerId);
           // Presence only — the joiner receives `peers` and offers to us (avoids
           // glare when 3+ peers join a mesh). Host relay must send `peers`.
-          await this.ensurePeer(msg.peerId, msg.displayName);
+          await this.ensurePeer(msg.peerId, {
+            displayName: msg.displayName,
+            avatarUrl: msg.avatarUrl,
+          });
           break;
         case 'leave':
           this.removePeer(msg.peerId);
@@ -348,7 +379,10 @@ export class KapiRoom {
         case 'peers':
           for (const p of msg.peers) {
             if (p.peerId === this.options.peerId) continue;
-            await this.ensurePeer(p.peerId, p.displayName);
+            await this.ensurePeer(p.peerId, {
+              displayName: p.displayName,
+              avatarUrl: p.avatarUrl,
+            });
             await this.negotiate(p.peerId);
           }
           break;

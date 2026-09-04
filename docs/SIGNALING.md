@@ -8,11 +8,11 @@ Host implements `SignalAdapter` and relays `SignalMessage` between peers in a ro
 
 ```ts
 type SignalMessage =
-  | { type: 'join'; peerId: string; displayName?: string }
+  | { type: 'join'; peerId: string; displayName?: string; avatarUrl?: string }
   | { type: 'leave'; peerId: string }
   | { type: 'offer' | 'answer'; sdp: string; to: string; from?: string }
   | { type: 'ice'; candidate: RTCIceCandidateInit; to: string; from?: string }
-  | { type: 'peers'; peers: { peerId: string; displayName?: string }[] }
+  | { type: 'peers'; peers: { peerId: string; displayName?: string; avatarUrl?: string }[] }
   | { type: 'media-state'; peerId: string; sharing: boolean; mic?: boolean; cam?: boolean; to?: string }
   | { type: 'video-hint'; to: string; width: number; height: number; from?: string }
 

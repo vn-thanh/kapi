@@ -171,6 +171,7 @@
 
       roomInput.value = params.get('room') || roomInput.value;
       nameInput.value = params.get('name') || `User-${crypto.randomUUID().slice(0, 4)}`;
+      const avatarUrl = (params.get('avatar') || '').trim() || undefined;
 
       let handle = null;
       let joining = false;
@@ -291,6 +292,7 @@
             roomId,
             peerId,
             displayName,
+            avatarUrl,
             signal,
             // STUN alone often fails across different NATs (e.g. share via ngrok).
             // Open Relay is a public demo TURN — use your own TURN in production.

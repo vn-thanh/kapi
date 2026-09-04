@@ -78,6 +78,7 @@ const api = mount(containerEl, {
   roomId,
   peerId,
   displayName,
+  avatarUrl, // optional image URL — shown when video is off
   signal: createSocketSignal(roomId, peerId),
   iceServers, // include TURN in production
   onHangup: () => api.dispose(),
