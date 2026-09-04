@@ -73,6 +73,25 @@
         display: flex;
         gap: 10px;
       }
+      .media-toggles {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+      .media-toggles button {
+        flex: 1;
+        border: 1px solid #2c3b52;
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: #0e141d;
+        color: var(--fg);
+        font-size: 0.9rem;
+        cursor: pointer;
+      }
+      .media-toggles button[aria-pressed='true'] {
+        border-color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 22%, #0e141d);
+      }
       button.primary {
         flex: 1;
         border: 0;
@@ -140,13 +159,18 @@
       <input id="room" value="kapi-demo" autocomplete="off" />
       <label for="name">Display name</label>
       <input id="name" autocomplete="nickname" />
+      <label>Before you join</label>
+      <div class="media-toggles" role="group" aria-label="Microphone and camera">
+        <button type="button" id="lobby-mic" aria-pressed="false">Mic off</button>
+        <button type="button" id="lobby-cam" aria-pressed="false">Cam off</button>
+      </div>
       <div class="row">
         <button class="primary" id="join" type="button">Join call</button>
       </div>
       <p class="hint">
         Signaling is HTTP long-poll through this demo server (works across machines / ngrok).
-        Camera or mic missing is OK — you can still join. Demo includes a public TURN relay
-        so media works across different networks.
+        Toggle mic/cam here like Meet/Zoom pre-join — devices are only requested when you
+        turn them on. Demo includes a public TURN relay so media works across different networks.
       </p>
     </div>
     <div id="meet"></div>
@@ -166,12 +190,33 @@
       const roomInput = document.getElementById('room');
       const nameInput = document.getElementById('name');
       const joinBtn = document.getElementById('join');
+      const lobbyMic = document.getElementById('lobby-mic');
+      const lobbyCam = document.getElementById('lobby-cam');
       const banner = document.getElementById('banner');
       const meet = document.getElementById('meet');
 
       roomInput.value = params.get('room') || roomInput.value;
       nameInput.value = params.get('name') || `User-${crypto.randomUUID().slice(0, 4)}`;
       const avatarUrl = (params.get('avatar') || '').trim() || undefined;
+
+      let lobbyMicOn = params.get('mic') === '1';
+      let lobbyCamOn = params.get('cam') === '1';
+
+      function syncLobbyMedia() {
+        lobbyMic.setAttribute('aria-pressed', lobbyMicOn ? 'true' : 'false');
+        lobbyCam.setAttribute('aria-pressed', lobbyCamOn ? 'true' : 'false');
+        lobbyMic.textContent = lobbyMicOn ? 'Mic on' : 'Mic off';
+        lobbyCam.textContent = lobbyCamOn ? 'Cam on' : 'Cam off';
+      }
+      syncLobbyMedia();
+      lobbyMic.addEventListener('click', () => {
+        lobbyMicOn = !lobbyMicOn;
+        syncLobbyMedia();
+      });
+      lobbyCam.addEventListener('click', () => {
+        lobbyCamOn = !lobbyCamOn;
+        syncLobbyMedia();
+      });
 
       let handle = null;
       let joining = false;
@@ -294,6 +339,15 @@
             displayName,
             avatarUrl,
             signal,
+            media: {
+              startMic: lobbyMicOn,
+              startCam: lobbyCamOn,
+              // Lobby chose the initial state — only open devices that start on
+              // (and when the user later toggles from the in-call toolbar).
+              acquire: 'on-enable',
+            },
+            connectionQuality: true,
+            connectionQualityUi: 'bars',
             // STUN alone often fails across different NATs (e.g. share via ngrok).
             // Open Relay is a public demo TURN — use your own TURN in production.
             iceServers: [

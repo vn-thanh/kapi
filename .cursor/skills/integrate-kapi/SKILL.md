@@ -81,11 +81,19 @@ const api = mount(containerEl, {
   avatarUrl, // optional image URL — shown when video is off
   signal: createSocketSignal(roomId, peerId),
   iceServers, // include TURN in production
+  media: {
+    startMic: false, // or pass lobby toggle
+    startCam: false,
+    acquire: 'on-enable', // optional: no getUserMedia until mic/cam on
+  },
+  connectionQuality: true, // default; false to disable
+  connectionQualityUi: 'bars', // 'bars' | 'dot' | 'off'
   onHangup: () => api.dispose(),
 })
 ```
 
-**Headless:** `KapiRoom.join({ ... })` then bind `track` / `local-stream` to your own UI.
+**Headless:** `KapiRoom.join({ ... })` then bind `track` / `local-stream` /
+`connection-quality` to your own UI.
 
 ### 5. ICE / TURN
 

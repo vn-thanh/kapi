@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project is maintained by [release-please](https://github.com/googleapis/release-please) — future entries are generated automatically from Conventional Commits.
 
+## [Unreleased]
+
+### Added
+
+- **Initial mic/cam + acquire policy** — `media.startMic` / `media.startCam` (default `false`) and `media.acquire: 'join' | 'on-enable'` so hosts can join muted/camera-off or delay `getUserMedia` until the user enables a device. `setMic` / `setCam` are async and acquire missing tracks when needed.
+- **Connection quality** — `connectionQuality` option (default on) samples inbound loss + RTT and emits `connection-quality` (`excellent` / `good` / `poor` / `lost` / `unknown`). Built-in UI signal bars via `connectionQualityUi: 'bars' | 'dot' | 'off'`; overridable labels and score thresholds. Helpers: `scoreConnectionQuality`, `readQualitySample`.
+
+### Changed
+
+- Joining no longer starts with mic and camera on by default (privacy-friendly). Pass `media: { startMic: true, startCam: true }` for the previous behaviour.
+
 ## [1.1.0](https://github.com/vn-thanh/kapi/releases/tag/v1.1.0) (2026-09-05)
 
 ### Added

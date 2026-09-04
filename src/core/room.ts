@@ -1,6 +1,7 @@
-import { resolveRoomOptions } from '../options';
+import { resolveRoomOptions, DEFAULT_VIDEO } from '../options';
 import type {
   BackgroundMode,
+  ConnectionQuality,
   KapiRoomOptions,
   RoomEvent,
   RoomEventMap,
@@ -27,8 +28,8 @@ export class KapiRoom {
   /** Monotonic token so a slow background start can't clobber a newer one. */
   private backgroundSeq = 0;
   private closed = false;
-  private micEnabled = true;
-  private camEnabled = true;
+  private micEnabled = false;
+  private camEnabled = false;
   /** Serialize signal handling so ICE cannot race ahead of offer/answer. */
   private signalChain: Promise<void> = Promise.resolve();
   /** Negotiations skipped while a peer was mid-offer — flushed on `stable`. */
@@ -37,6 +38,10 @@ export class KapiRoom {
   private readonly restartTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Adaptive quality ticker (3s) — null when `adaptive: false`. */
   private qualityTimer: ReturnType<typeof setInterval> | null = null;
+  /** Connection-quality ticker — null when sampling is disabled. */
+  private connectionQualityTimer: ReturnType<typeof setInterval> | null = null;
+  /** Last emitted quality per peer — avoid redundant UI events. */
+  private readonly lastConnectionQuality = new Map<string, ConnectionQuality>();
   /** Bound once so start/hangup can add/remove the same unload listener. */
   private readonly onPageUnload = () => {
     // hangup()'s body is fully synchronous, so the `leave` message is queued
@@ -115,13 +120,40 @@ export class KapiRoom {
     });
 
     try {
-      this.rawCameraStream = await getLocalStream(this.options.media!);
+      const media = this.options.media!;
+      this.micEnabled = media.startMic ?? false;
+      this.camEnabled = media.startCam ?? false;
+      const acquire = media.acquire ?? 'join';
+      // Resolve what to ask getUserMedia for on join. `on-enable` skips kinds
+      // that start off so the camera LED stays dark until the user turns it on.
+      const audioConstraint: boolean | MediaTrackConstraints =
+        media.audio === false
+          ? false
+          : acquire === 'on-enable' && !this.micEnabled
+            ? false
+            : media.audio === undefined || media.audio === true
+              ? true
+              : media.audio;
+      const videoConstraint: boolean | MediaTrackConstraints =
+        media.video === false
+          ? false
+          : acquire === 'on-enable' && !this.camEnabled
+            ? false
+            : media.video === undefined || media.video === true
+              ? DEFAULT_VIDEO
+              : media.video;
+
+      this.rawCameraStream = await getLocalStream({
+        audio: audioConstraint,
+        video: videoConstraint,
+      });
       this.localStream = this.rawCameraStream;
+      this.applyMicState();
       this.applyCamState();
 
       const bg = this.options.effects?.background ?? 'none';
       this.currentBackground = bg === undefined ? 'none' : bg;
-      if (bg !== 'none') {
+      if (bg !== 'none' && this.rawCameraStream.getVideoTracks().length > 0) {
         // A broken effect (offline CDN, dead model URL) must not block joining.
         try {
           await this.setBackground(bg);
@@ -164,6 +196,13 @@ export class KapiRoom {
       this.qualityTimer = setInterval(() => {
         for (const peer of this.peers.values()) void peer.sampleVideoQuality();
       }, 3000);
+    }
+
+    const cq = this.options.connectionQualityResolved;
+    if (cq.enabled) {
+      this.connectionQualityTimer = setInterval(() => {
+        void this.sampleAllConnectionQuality();
+      }, cq.intervalMs);
     }
   }
 
@@ -229,6 +268,12 @@ export class KapiRoom {
         this.emit('track', { peerId: remoteId, track, streams }),
       onConnectionState: (state) => {
         this.emit('peer-state', { peerId: remoteId, state });
+        if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+          this.emitConnectionQuality(remoteId, 'lost');
+        } else if (state === 'connected') {
+          // Fresh connected — sample ASAP instead of waiting for the tick.
+          void this.samplePeerConnectionQuality(remoteId);
+        }
         if (state === 'connected') {
           this.restartAttempts.delete(remoteId);
           this.clearRestartTimer(remoteId);
@@ -294,10 +339,36 @@ export class KapiRoom {
     this.clearRestartTimer(remoteId);
     this.restartAttempts.delete(remoteId);
     this.pendingNegotiation.delete(remoteId);
+    this.lastConnectionQuality.delete(remoteId);
     peer.close();
     this.peers.delete(remoteId);
     this.peerMeta.delete(remoteId);
     this.emit('peer-left', { peerId: remoteId });
+  }
+
+  private emitConnectionQuality(peerId: string, quality: ConnectionQuality) {
+    if (!this.options.connectionQualityResolved.enabled) return;
+    if (this.lastConnectionQuality.get(peerId) === quality) return;
+    this.lastConnectionQuality.set(peerId, quality);
+    this.emit('connection-quality', { peerId, quality });
+  }
+
+  private async samplePeerConnectionQuality(peerId: string) {
+    if (this.closed || !this.options.connectionQualityResolved.enabled) return;
+    const peer = this.peers.get(peerId);
+    if (!peer) return;
+    const quality = await peer.sampleConnectionQuality(
+      this.options.connectionQualityResolved.thresholds,
+    );
+    if (this.closed || !this.peers.has(peerId)) return;
+    this.emitConnectionQuality(peerId, quality);
+  }
+
+  private async sampleAllConnectionQuality() {
+    if (this.closed) return;
+    await Promise.all(
+      [...this.peers.keys()].map((id) => this.samplePeerConnectionQuality(id)),
+    );
   }
 
   private clearRestartTimer(remoteId: string) {
@@ -458,17 +529,39 @@ export class KapiRoom {
     }
   }
 
-  setMic(enabled: boolean) {
+  async setMic(enabled: boolean) {
     this.micEnabled = enabled;
-    for (const t of this.localStream?.getAudioTracks() ?? []) t.enabled = enabled;
-    for (const t of this.rawCameraStream?.getAudioTracks() ?? []) t.enabled = enabled;
+    if (enabled) {
+      try {
+        await this.ensureLocalKind('audio');
+      } catch (err) {
+        this.micEnabled = false;
+        this.emit('error', { error: err instanceof Error ? err : new Error(String(err)) });
+        return;
+      }
+    }
+    this.applyMicState();
     this.broadcastMediaState();
   }
 
-  setCam(enabled: boolean) {
+  async setCam(enabled: boolean) {
     this.camEnabled = enabled;
+    if (enabled) {
+      try {
+        await this.ensureLocalKind('video');
+      } catch (err) {
+        this.camEnabled = false;
+        this.emit('error', { error: err instanceof Error ? err : new Error(String(err)) });
+        return;
+      }
+    }
     this.applyCamState();
     this.broadcastMediaState();
+  }
+
+  private applyMicState() {
+    for (const t of this.localStream?.getAudioTracks() ?? []) t.enabled = this.micEnabled;
+    for (const t of this.rawCameraStream?.getAudioTracks() ?? []) t.enabled = this.micEnabled;
   }
 
   /**
@@ -485,6 +578,98 @@ export class KapiRoom {
     }
     for (const t of this.rawCameraStream?.getVideoTracks() ?? []) {
       if (!seen.has(t)) t.enabled = this.camEnabled;
+    }
+  }
+
+  /**
+   * Acquire a missing local audio/video track (used when `acquire: 'on-enable'`
+   * or when join fell back to audio/video-less). Attaches to peers and may
+   * renegotiate.
+   */
+  private async ensureLocalKind(kind: 'audio' | 'video') {
+    if (this.closed) return;
+    const media = this.options.media!;
+    if (kind === 'audio' && media.audio === false) return;
+    if (kind === 'video' && media.video === false) return;
+
+    const live =
+      kind === 'audio'
+        ? this.rawCameraStream?.getAudioTracks().find((t) => t.readyState === 'live')
+        : this.rawCameraStream?.getVideoTracks().find((t) => t.readyState === 'live');
+    if (live) return;
+
+    const constraints =
+      kind === 'audio'
+        ? {
+            audio:
+              media.audio === undefined || media.audio === true ? true : media.audio,
+            video: false as const,
+          }
+        : {
+            audio: false as const,
+            video:
+              media.video === undefined || media.video === true
+                ? DEFAULT_VIDEO
+                : media.video,
+          };
+
+    const stream = await getLocalStream(constraints);
+    if (this.closed) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    const track =
+      kind === 'audio' ? stream.getAudioTracks()[0] : stream.getVideoTracks()[0];
+    if (!track) return;
+
+    if (!this.rawCameraStream) this.rawCameraStream = new MediaStream();
+    // Drop dead tracks of the same kind before attaching the fresh one.
+    for (const old of kind === 'audio'
+      ? this.rawCameraStream.getAudioTracks()
+      : this.rawCameraStream.getVideoTracks()) {
+      this.rawCameraStream.removeTrack(old);
+      old.stop();
+    }
+    this.rawCameraStream.addTrack(track);
+
+    if (kind === 'audio') {
+      track.enabled = this.micEnabled;
+      const targets = new Set<MediaStream>(
+        [this.rawCameraStream, this.localStream].filter((s): s is MediaStream => !!s),
+      );
+      for (const target of targets) {
+        for (const old of target.getAudioTracks()) {
+          if (old === track) continue;
+          target.removeTrack(old);
+          old.stop();
+        }
+        if (!target.getAudioTracks().includes(track)) target.addTrack(track);
+      }
+      if (!this.localStream) this.localStream = this.rawCameraStream;
+      for (const [id, peer] of this.peers) {
+        if (await peer.replaceTrack('audio', track)) await this.negotiate(id);
+      }
+      this.emit('local-stream', { stream: this.localStream });
+      return;
+    }
+
+    // Video: respect background / screen-share paths.
+    track.enabled = this.camEnabled;
+    if (this.currentBackground !== 'none' && !this.screenStream) {
+      await this.setBackground(this.currentBackground);
+      return;
+    }
+    if (!this.screenStream) {
+      if (!this.localStream || this.localStream === this.rawCameraStream) {
+        this.localStream = this.rawCameraStream;
+      } else {
+        for (const old of this.localStream.getVideoTracks()) {
+          this.localStream.removeTrack(old);
+        }
+        this.localStream.addTrack(track);
+      }
+      await this.replaceVideoTrack(track);
+      this.applyCamState();
     }
   }
 
@@ -774,6 +959,11 @@ export class KapiRoom {
       clearInterval(this.qualityTimer);
       this.qualityTimer = null;
     }
+    if (this.connectionQualityTimer !== null) {
+      clearInterval(this.connectionQualityTimer);
+      this.connectionQualityTimer = null;
+    }
+    this.lastConnectionQuality.clear();
     for (const timer of this.restartTimers.values()) clearTimeout(timer);
     this.restartTimers.clear();
     this.pendingNegotiation.clear();

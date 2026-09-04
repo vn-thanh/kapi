@@ -61,10 +61,58 @@ export type ToolbarButton =
  *  `'sidebar'` puts the filmstrip in a right-hand column instead. */
 export type KapiLayout = 'grid' | 'spotlight' | 'sidebar';
 
+/**
+ * When to call `getUserMedia` for kinds allowed by `media.audio` / `media.video`.
+ * - `'join'` — acquire on join, then apply `startMic` / `startCam` via
+ *   `track.enabled` (fast unmute; camera LED may stay on while cam is "off").
+ * - `'on-enable'` — only acquire kinds that start on; acquire the rest when
+ *   `setMic(true)` / `setCam(true)`. Best privacy (no LED until the user
+ *   turns the camera on). Hosts that run a pre-join preview should pass
+ *   their lobby toggles as `startMic` / `startCam` and usually keep `'join'`.
+ */
+export type KapiMediaAcquire = 'join' | 'on-enable';
+
 export interface KapiMediaOptions {
   audio?: boolean | MediaTrackConstraints;
   video?: boolean | MediaTrackConstraints;
+  /**
+   * Initial microphone on/off after joining. Default `false` (privacy-friendly;
+   * unmute when ready — Discord / Meet lobby pattern).
+   */
+  startMic?: boolean;
+  /**
+   * Initial camera on/off after joining. Default `false`.
+   */
+  startCam?: boolean;
+  /** Device acquisition policy. Default `'join'`. */
+  acquire?: KapiMediaAcquire;
 }
+
+/** Per-peer link quality for UI signal bars (Zoom/Meet-style). */
+export type ConnectionQuality = 'excellent' | 'good' | 'poor' | 'lost' | 'unknown';
+
+/** Override packet-loss / RTT cutoffs used by the quality scorer. */
+export interface KapiConnectionQualityThresholds {
+  /** Max fraction of lost packets for `'excellent'` (default `0.02`). */
+  excellentLoss?: number;
+  /** Max fraction of lost packets for `'good'` (default `0.08`). */
+  goodLoss?: number;
+  /** Max RTT in seconds for `'excellent'` (default `0.15`). */
+  excellentRtt?: number;
+  /** Max RTT in seconds for `'good'` (default `0.4`). */
+  goodRtt?: number;
+}
+
+export interface KapiConnectionQualityOptions {
+  /** Sample peer links and emit `connection-quality`. Default `true`. */
+  enabled?: boolean;
+  /** Sampling interval in ms. Default `3000`. */
+  intervalMs?: number;
+  thresholds?: KapiConnectionQualityThresholds;
+}
+
+/** How the built-in UI renders link quality. */
+export type KapiConnectionQualityUi = 'bars' | 'dot' | 'off';
 
 export interface KapiEffectsOptions {
   background?: BackgroundMode;
@@ -100,6 +148,13 @@ export interface KapiRoomOptions {
    * stat/hint engine and only honor `maxBitrate`.
    */
   adaptive?: boolean;
+  /**
+   * Per-peer connection quality for signal bars (default on). Pass `false` to
+   * disable, or an object to tune interval / loss-RTT thresholds. Emits
+   * `connection-quality` for headless UIs; the built-in UI also listens unless
+   * `connectionQualityUi: 'off'`.
+   */
+  connectionQuality?: boolean | KapiConnectionQualityOptions;
   /** Preferred video codec mime, e.g. video/VP8 */
   videoCodec?: string;
   autoJoin?: boolean;
@@ -121,6 +176,12 @@ export type RoomEventMap = {
   track: { peerId: string; track: MediaStreamTrack; streams: readonly MediaStream[] };
   /** RTCPeerConnection state per remote peer — drive UI connection badges. */
   'peer-state': { peerId: string; state: RTCPeerConnectionState };
+  /**
+   * Coarse link quality for a remote peer (inbound loss + RTT). Fires on a
+   * timer while `connectionQuality` is enabled; also jumps to `'lost'` when
+   * `peer-state` becomes disconnected/failed/closed.
+   */
+  'connection-quality': { peerId: string; quality: ConnectionQuality };
   'local-stream': { stream: MediaStream };
   /** An emoji reaction — fired for remote arrivals AND for the local one
    *  triggered by `sendReaction` (single stream for UI consumers). */
@@ -171,6 +232,12 @@ export interface KapiUiLabels {
   unpin?: string;
   you?: string;
   enableSound?: string;
+  /** Tooltip / roster label for excellent link quality. */
+  connectionExcellent?: string;
+  connectionGood?: string;
+  connectionPoor?: string;
+  connectionLost?: string;
+  connectionUnknown?: string;
 }
 
 export interface KapiMountOptions extends KapiRoomOptions {
@@ -187,6 +254,12 @@ export interface KapiMountOptions extends KapiRoomOptions {
    * cropped screen content is unreadable.
    */
   videoFit?: 'contain' | 'cover';
+  /**
+   * Built-in UI connection indicator. Default `'bars'` when room
+   * `connectionQuality` is on, else `'dot'` (legacy PC-state only).
+   * `'off'` hides the indicator entirely.
+   */
+  connectionQualityUi?: KapiConnectionQualityUi;
   onHangup?: () => void;
   onReady?: (room: import('./core/room').KapiRoom) => void;
   onError?: (error: Error) => void;

@@ -1,4 +1,6 @@
+import type { ConnectionQuality, KapiConnectionQualityThresholds } from '../types';
 import { applyMaxBitrate, applyVideoCodecPreference } from './media';
+import { readQualitySample, scoreConnectionQuality } from './quality';
 
 /**
  * Camera quality rungs, high → low (all relative to capture size via
@@ -311,6 +313,14 @@ export class KapiPeer {
       }
     }
     await this.syncVideoParams();
+  }
+
+  /** Inbound loss + RTT → coarse quality for UI signal bars. */
+  async sampleConnectionQuality(
+    thresholds?: Required<KapiConnectionQualityThresholds>,
+  ): Promise<ConnectionQuality> {
+    const sample = await readQualitySample(this.pc);
+    return scoreConnectionQuality(sample, thresholds);
   }
 
   async createAndSetOffer(iceRestart = false): Promise<string> {

@@ -5,6 +5,12 @@ export {
   createLocalSignalBus,
 } from './core/signaling';
 export { getLocalStream, getDisplayStream, listDevices } from './core/media';
+export {
+  scoreConnectionQuality,
+  readQualitySample,
+  DEFAULT_QUALITY_THRESHOLDS,
+} from './core/quality';
+export type { QualitySample } from './core/quality';
 export { BackgroundProcessor } from './effects/background';
 export {
   DEFAULT_ICE_SERVERS,
@@ -13,8 +19,11 @@ export {
   DEFAULT_TOOLBAR,
   DEFAULT_THEME,
   DEFAULT_LABELS,
+  DEFAULT_VIDEO,
   resolveRoomOptions,
+  resolveConnectionQuality,
 } from './options';
+export type { ResolvedConnectionQuality } from './options';
 export type {
   BackgroundMode,
   SignalAdapter,
@@ -22,9 +31,14 @@ export type {
   SignalPeer,
   KapiRoomOptions,
   KapiMediaOptions,
+  KapiMediaAcquire,
   KapiEffectsOptions,
   KapiMountOptions,
   KapiMountHandle,
+  KapiConnectionQualityOptions,
+  KapiConnectionQualityThresholds,
+  KapiConnectionQualityUi,
+  ConnectionQuality,
   RoomEvent,
   RoomEventMap,
   ToolbarButton,

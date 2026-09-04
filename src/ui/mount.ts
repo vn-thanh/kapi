@@ -1,10 +1,13 @@
 import { KapiRoom } from '../core/room';
-import { DEFAULT_LABELS, DEFAULT_THEME, DEFAULT_TOOLBAR } from '../options';
+import { DEFAULT_LABELS, DEFAULT_THEME, DEFAULT_TOOLBAR, resolveConnectionQuality } from '../options';
 import type {
   BackgroundMode,
+  ConnectionQuality,
+  KapiConnectionQualityUi,
   KapiLayout,
   KapiMountHandle,
   KapiMountOptions,
+  KapiUiLabels,
   ToolbarButton,
 } from '../types';
 import { toolbarIconHtml, statusIconHtml } from './icons';
@@ -34,6 +37,30 @@ function initials(name: string): string {
   return (a + b).toUpperCase();
 }
 
+function fillConnBars(el: HTMLElement) {
+  el.replaceChildren();
+  for (let i = 0; i < 4; i++) {
+    const bar = document.createElement('i');
+    bar.className = 'kapi-conn-bar';
+    el.appendChild(bar);
+  }
+}
+
+function qualityLabel(quality: ConnectionQuality, labels: Required<KapiUiLabels>): string {
+  switch (quality) {
+    case 'excellent':
+      return labels.connectionExcellent;
+    case 'good':
+      return labels.connectionGood;
+    case 'poor':
+      return labels.connectionPoor;
+    case 'lost':
+      return labels.connectionLost;
+    default:
+      return labels.connectionUnknown;
+  }
+}
+
 /**
  * A tile whose video track still *looks* live (unmuted, enabled) but has
  * presented no frame for this long is treated as video-off. When a sender
@@ -59,6 +86,12 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   const toolbarBtns = options.toolbar?.length ? options.toolbar : DEFAULT_TOOLBAR;
   const selfId = options.peerId;
   const selfName = options.displayName?.trim() || labels.you;
+  const cqResolved = resolveConnectionQuality(options.connectionQuality);
+  const connUi: KapiConnectionQualityUi =
+    options.connectionQualityUi ?? (cqResolved.enabled ? 'bars' : 'dot');
+  const startMic = options.media?.startMic ?? false;
+  const startCam = options.media?.startCam ?? false;
+  const peerQuality = new Map<string, ConnectionQuality>();
 
   const root = document.createElement('div');
   root.className = 'kapi-root';
@@ -485,7 +518,11 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     meta.className = 'kapi-tile-meta';
     const conn = document.createElement('span');
     conn.className = 'kapi-conn';
-    conn.title = 'connecting';
+    conn.dataset.ui = connUi;
+    if (connUi === 'bars') fillConnBars(conn);
+    conn.dataset.quality = 'unknown';
+    conn.dataset.state = 'connecting';
+    conn.title = labels.connectionUnknown;
     const tag = document.createElement('span');
     tag.className = 'kapi-label';
     tag.textContent = label;
@@ -809,6 +846,16 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     root.appendChild(el);
   }
 
+  function applyConnectionQuality(peerId: string, quality: ConnectionQuality) {
+    peerQuality.set(peerId, quality);
+    const tile = tiles.get(peerId);
+    if (tile && connUi !== 'off') {
+      tile.conn.dataset.quality = quality;
+      tile.conn.title = qualityLabel(quality, labels);
+    }
+    if (!pane.classList.contains('hidden')) renderParticipants();
+  }
+
   function renderParticipants() {
     if (!room) return;
     pane.innerHTML = '';
@@ -849,6 +896,15 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         chip.textContent = initials(p.displayName ?? p.peerId);
         li.append(chip, name);
       }
+      if (p.peerId !== selfId && connUi === 'bars') {
+        const q = peerQuality.get(p.peerId) ?? 'unknown';
+        const sig = document.createElement('span');
+        sig.className = 'kapi-roster-quality';
+        sig.dataset.quality = q;
+        sig.title = qualityLabel(q, labels);
+        fillConnBars(sig);
+        li.append(sig);
+      }
       const muted =
         p.peerId === selfId ? !(room.micOn) : peerMicOn.get(p.peerId) === false;
       if (muted) {
@@ -856,6 +912,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         mute.className = 'kapi-roster-mute';
         mute.innerHTML = statusIconHtml('micOff');
         mute.setAttribute('aria-label', 'Muted');
+        if (p.peerId !== selfId && connUi === 'bars') mute.style.marginLeft = '0';
         li.append(mute);
       }
       ul.appendChild(li);
@@ -894,10 +951,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   function updateToolbarLabels() {
     for (const [id, b] of buttons) {
       if (id === 'mic') {
-        const on = room?.micOn ?? true;
+        const on = room?.micOn ?? startMic;
         paintButton(b, id, on ? labels.micOn : labels.micOff, on ? 'on' : 'off');
       } else if (id === 'cam') {
-        const on = room?.camOn ?? true;
+        const on = room?.camOn ?? startCam;
         paintButton(b, id, on ? labels.camOn : labels.camOff, on ? 'on' : 'off');
       } else if (id === 'share') {
         const sharing = room?.sharing ?? false;
@@ -1146,6 +1203,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     remoteStreams.clear();
     pendingMediaState.clear();
     peerMicOn.clear();
+    peerQuality.clear();
     tiles.clear();
     const r = room;
     room = null;
@@ -1164,8 +1222,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         showToast(labels.noMic);
         return;
       }
-      room.setMic(!room.micOn);
-      updateToolbarLabels();
+      void room
+        .setMic(!room.micOn)
+        .then(() => updateToolbarLabels())
+        .catch(reportError);
     },
     cam: () => {
       if (!room) return;
@@ -1173,8 +1233,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         showToast(labels.noCam);
         return;
       }
-      room.setCam(!room.camOn);
-      updateToolbarLabels();
+      void room
+        .setCam(!room.camOn)
+        .then(() => updateToolbarLabels())
+        .catch(reportError);
     },
     share: () => {
       if (!room) return;
@@ -1247,6 +1309,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         }),
         r.on('peer-left', ({ peerId }) => {
           removeTile(peerId);
+          peerQuality.delete(peerId);
           renderParticipants();
         }),
         r.on('track', ({ peerId, track }) => attachRemoteTrack(peerId, track)),
@@ -1258,7 +1321,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
           const tile = tiles.get(peerId);
           if (!tile) return;
           tile.conn.dataset.state = state;
-          tile.conn.title = state;
+          if (connUi === 'dot') tile.conn.title = state;
+        }),
+        r.on('connection-quality', ({ peerId, quality }) => {
+          applyConnectionQuality(peerId, quality);
         }),
         r.on('error', ({ error }) => reportError(error)),
         // External hangup (API, unload hook) also tears the UI down;

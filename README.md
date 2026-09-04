@@ -139,8 +139,8 @@ room.on('track', ({ peerId, streams }) => {
   videoEl.srcObject = streams[0] // one managed stream per peer
 })
 
-room.setMic(false)
-room.setCam(true)
+await room.setMic(false)
+await room.setCam(true)
 await room.shareScreen(true)
 await room.setBackground('blur')
 room.sendReaction('👍') // floats up everyone's screen, Jitsi-style
@@ -151,8 +151,8 @@ await room.hangup()
 
 | Method | What it does |
 |---|---|
-| `setMic(on)` | Mute / unmute the audio track (broadcasts `media-state`) |
-| `setCam(on)` | Start / stop the camera track (broadcasts `media-state`) |
+| `setMic(on)` | Mute / unmute (async — acquires the mic when needed with `acquire: 'on-enable'`; broadcasts `media-state`) |
+| `setCam(on)` | Start / stop camera (async — same acquire rules; broadcasts `media-state`) |
 | `shareScreen(on)` | Start / stop screen sharing (broadcasts `media-state`) |
 | `setBackground(mode)` | `'none'` \| `'blur'` \| `'remove'` \| `{ image: url }` — swaps the processed track live |
 | `switchDevice(kind, deviceId)` | Switch mic (`audioinput`) or camera (`videoinput`) mid-call |
@@ -167,6 +167,7 @@ await room.hangup()
 | `peer-left` | `{ peerId }` | Removing a tile |
 | `track` | `{ peerId, track, streams }` | Rendering remote media |
 | `peer-state` | `{ peerId, state }` | Connection status badges |
+| `connection-quality` | `{ peerId, quality }` | Signal bars (`excellent` / `good` / `poor` / `lost` / `unknown`) |
 | `local-stream` | `{ stream }` | Local preview (re-emitted on share / background / device switch) |
 | `reaction` | `{ peerId, emoji }` | Floating emoji (fires for yours too) |
 | `media-state` | `{ peerId, sharing, mic?, cam? }` | Mute chip, camera-off, screen-share stage |
@@ -196,6 +197,13 @@ Full payloads: [docs/OPTIONS.md](docs/OPTIONS.md#room-events-roomonevent-handler
 ```ts
 const api = mount(el, {
   roomId, peerId, displayName, signal,
+  media: {
+    startMic: false,       // join muted (default)
+    startCam: false,       // join with camera off (default)
+    acquire: 'on-enable',  // no getUserMedia until user turns mic/cam on
+  },
+  connectionQuality: true,           // emit connection-quality (default on)
+  connectionQualityUi: 'bars',       // signal bars on tiles (default when CQ on)
   toolbar: ['mic', 'cam', 'share', 'react', 'layout', 'hangup'],
   layout: 'spotlight',
   theme: { accent: '#e11d48' },
@@ -287,16 +295,19 @@ io.on('connection', (socket) => {
 | `iceServers` | Google STUN | Add TURN for corporate NATs |
 | `maxPeers` | `6` | Mesh upload cost is O(n²) per peer |
 | `media.audio` / `media.video` | `true` (video → 720p-ideal) | Any `getUserMedia` constraints |
+| `media.startMic` / `media.startCam` | `false` | Initial mic/cam after join |
+| `media.acquire` | `'join'` | `'on-enable'` = acquire only when toggled on |
 | `effects.background` | `'none'` | `'blur'` \| `'remove'` \| `{ image }` |
 | `effects.blurAmount` | `12` | CSS blur px |
 | `effects.modelUrl` | MediaPipe CDN | Self-host the segmenter model |
 | `polite` | `true` | Perfect-negotiation glare handling |
 | `maxBitrate` | — | Video sender cap (bps); hard cap when `adaptive` is on |
 | `adaptive` | `true` | Auto video quality: resolution/bitrate/fps follow link health and each receiver's tile size; screen share stays sharp at low fps |
+| `connectionQuality` | `true` | Per-peer signal quality (`connection-quality` event); tune `intervalMs` / `thresholds` |
 | `videoCodec` | — | e.g. `'video/VP8'` |
 | `autoJoin` | `true` | Emit `join` immediately |
 | `leaveOnUnload` | `true` | Instant leave on tab close / refresh |
-| UI: `toolbar`, `layout`, `theme`, `labels`, `videoFit` | — | See [docs/OPTIONS.md](docs/OPTIONS.md) |
+| UI: `toolbar`, `layout`, `theme`, `labels`, `videoFit`, `connectionQualityUi` | — | See [docs/OPTIONS.md](docs/OPTIONS.md) |
 
 ## 🧪 Browser support & limits
 

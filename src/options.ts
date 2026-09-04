@@ -1,4 +1,12 @@
-import type { KapiRoomOptions, KapiUiLabels, KapiUiTheme, ToolbarButton } from './types';
+import type {
+  KapiConnectionQualityOptions,
+  KapiConnectionQualityThresholds,
+  KapiRoomOptions,
+  KapiUiLabels,
+  KapiUiTheme,
+  ToolbarButton,
+} from './types';
+import { DEFAULT_QUALITY_THRESHOLDS } from './core/quality';
 
 export const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -13,7 +21,7 @@ export const DEFAULT_MAX_PEERS = 6;
  * needs. `ideal` (not `exact`/`max`) — lower-default cameras are untouched
  * and the adaptive engine scales down from whatever it gets.
  */
-const DEFAULT_VIDEO: MediaTrackConstraints = {
+export const DEFAULT_VIDEO: MediaTrackConstraints = {
   width: { ideal: 1280 },
   height: { ideal: 720 },
 };
@@ -62,7 +70,43 @@ export const DEFAULT_LABELS: Required<KapiUiLabels> = {
   unpin: 'Unpin tile',
   you: 'You',
   enableSound: 'Tap to enable sound',
+  connectionExcellent: 'Excellent connection',
+  connectionGood: 'Good connection',
+  connectionPoor: 'Poor connection',
+  connectionLost: 'Connection lost',
+  connectionUnknown: 'Connecting…',
 };
+
+export type ResolvedConnectionQuality = {
+  enabled: boolean;
+  intervalMs: number;
+  thresholds: Required<KapiConnectionQualityThresholds>;
+};
+
+/** Normalize `connectionQuality: boolean | object` into resolved settings. */
+export function resolveConnectionQuality(
+  opts: boolean | KapiConnectionQualityOptions | undefined,
+): ResolvedConnectionQuality {
+  if (opts === false) {
+    return {
+      enabled: false,
+      intervalMs: 3000,
+      thresholds: { ...DEFAULT_QUALITY_THRESHOLDS },
+    };
+  }
+  const o: KapiConnectionQualityOptions = opts === true || opts === undefined ? {} : opts;
+  const t = o.thresholds ?? {};
+  return {
+    enabled: o.enabled !== false,
+    intervalMs: typeof o.intervalMs === 'number' && o.intervalMs >= 500 ? o.intervalMs : 3000,
+    thresholds: {
+      excellentLoss: t.excellentLoss ?? DEFAULT_QUALITY_THRESHOLDS.excellentLoss,
+      goodLoss: t.goodLoss ?? DEFAULT_QUALITY_THRESHOLDS.goodLoss,
+      excellentRtt: t.excellentRtt ?? DEFAULT_QUALITY_THRESHOLDS.excellentRtt,
+      goodRtt: t.goodRtt ?? DEFAULT_QUALITY_THRESHOLDS.goodRtt,
+    },
+  };
+}
 
 export function resolveRoomOptions(opts: KapiRoomOptions): Required<
   Pick<
@@ -80,7 +124,10 @@ export function resolveRoomOptions(opts: KapiRoomOptions): Required<
     | 'adaptive'
   >
 > &
-  KapiRoomOptions {
+  KapiRoomOptions & {
+    connectionQualityResolved: ResolvedConnectionQuality;
+  } {
+  const videoOpt = opts.media?.video;
   return {
     ...opts,
     displayName: opts.displayName ?? opts.peerId,
@@ -90,10 +137,10 @@ export function resolveRoomOptions(opts: KapiRoomOptions): Required<
       audio: opts.media?.audio ?? true,
       // Explicit constraints pass through untouched; bare `true`/omitted gets
       // the 720p-ideal ceiling.
-      video:
-        opts.media?.video === undefined || opts.media?.video === true
-          ? DEFAULT_VIDEO
-          : opts.media.video,
+      video: videoOpt === undefined || videoOpt === true ? DEFAULT_VIDEO : videoOpt,
+      startMic: opts.media?.startMic ?? false,
+      startCam: opts.media?.startCam ?? false,
+      acquire: opts.media?.acquire ?? 'join',
     },
     effects: {
       background: opts.effects?.background ?? 'none',
@@ -104,5 +151,6 @@ export function resolveRoomOptions(opts: KapiRoomOptions): Required<
     autoJoin: opts.autoJoin ?? true,
     leaveOnUnload: opts.leaveOnUnload ?? true,
     adaptive: opts.adaptive ?? true,
+    connectionQualityResolved: resolveConnectionQuality(opts.connectionQuality),
   };
 }
