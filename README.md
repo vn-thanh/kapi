@@ -11,6 +11,7 @@
 
 **WebRTC mesh rooms in ~10 lines.** Bring your own signaling — Socket.IO, WebSocket, HTTP long-poll, BroadcastChannel, anything that can relay JSON. Optional client-side background blur / removal via MediaPipe. Ships a full meeting UI **and** a headless room API.
 
+<img width="1490" height="1056" alt="image" src="https://github.com/user-attachments/assets/bb63c8f8-bb2d-4f07-a8b8-f9b8bb7852c5" />
 </div>
 
 ---
