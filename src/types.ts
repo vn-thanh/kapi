@@ -134,6 +134,8 @@ export interface KapiUiLabels {
   background?: string;
   settings?: string;
   hangup?: string;
+  /** Overflow ("⋯") button that holds toolbar controls that don't fit. */
+  more?: string;
   /** Toolbar view-cycle button tooltip. */
   layout?: string;
   /** Click-to-pin tile tooltip (pinned tiles win the spotlight/sidebar stage). */

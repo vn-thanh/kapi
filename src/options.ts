@@ -45,6 +45,7 @@ export const DEFAULT_LABELS: Required<KapiUiLabels> = {
   background: 'Background',
   settings: 'Settings',
   hangup: 'Leave',
+  more: 'More',
   layout: 'View: grid',
   pin: 'Pin tile',
   unpin: 'Unpin tile',

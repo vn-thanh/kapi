@@ -246,13 +246,16 @@ export function injectStyles() {
   display: none;
 }
 
-/* ---------- toolbar ---------- */
+/* ---------- toolbar ----------
+   Single row. Controls that don't fit move into .kapi-overflow (the ⋯
+   menu) — wrapping used to steal vertical space from the tiles. */
 .kapi-toolbar {
   align-self: center;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   justify-content: center;
+  max-width: calc(100% - 24px);
   margin: 4px 12px 14px;
   padding: 8px 12px;
   border-radius: 999px;
@@ -266,6 +269,7 @@ export function injectStyles() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: none;
   width: 44px;
   height: 44px;
   border: 0;
@@ -321,6 +325,85 @@ export function injectStyles() {
 }
 .kapi-toolbar button[data-id='hangup']:hover {
   filter: brightness(1.12);
+}
+.kapi-toolbar button[data-id='more'][aria-expanded='true'] {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* Overflow ("⋯") menu — labeled rows for controls that left the bar. */
+.kapi-overflow {
+  position: absolute;
+  z-index: 7;
+  min-width: 220px;
+  max-width: min(280px, calc(100% - 16px));
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--kapi-toolbar, rgba(13, 17, 23, 0.92));
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kapi-overflow.hidden {
+  display: none;
+}
+.kapi-overflow button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  height: 40px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 10px;
+  cursor: pointer;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+.kapi-overflow button svg {
+  display: block;
+  flex-shrink: 0;
+}
+.kapi-overflow-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kapi-overflow button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.kapi-overflow button:focus-visible {
+  outline: 2px solid var(--kapi-accent, #3b82f6);
+  outline-offset: -2px;
+}
+.kapi-overflow button.is-off {
+  background: rgba(239, 68, 68, 0.92);
+  color: #fff;
+}
+.kapi-overflow button.is-off:hover {
+  background: rgba(239, 68, 68, 1);
+}
+.kapi-overflow button.is-active {
+  background: var(--kapi-accent, #3b82f6);
+  color: #fff;
+}
+.kapi-overflow button.is-unavailable {
+  opacity: 0.38;
+  cursor: not-allowed;
+  filter: grayscale(1);
+}
+.kapi-overflow button.is-unavailable:hover {
+  background: transparent;
 }
 
 /* ---------- side panels ---------- */

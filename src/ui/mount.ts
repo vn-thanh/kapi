@@ -95,6 +95,21 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   settingsEl.className = 'kapi-panel kapi-settings hidden';
   const reactPanel = document.createElement('div');
   reactPanel.className = 'kapi-reaction-picker hidden';
+  const overflowMenu = document.createElement('div');
+  overflowMenu.className = 'kapi-overflow hidden';
+  overflowMenu.id = `kapi-overflow-${selfId.replace(/[^a-zA-Z0-9_-]/g, '') || 'menu'}`;
+  overflowMenu.setAttribute('role', 'menu');
+  overflowMenu.setAttribute('aria-label', labels.more);
+  const moreBtn = document.createElement('button');
+  moreBtn.type = 'button';
+  moreBtn.dataset.id = 'more';
+  moreBtn.hidden = true;
+  moreBtn.innerHTML = toolbarIconHtml('more');
+  moreBtn.title = labels.more;
+  moreBtn.setAttribute('aria-label', labels.more);
+  moreBtn.setAttribute('aria-haspopup', 'menu');
+  moreBtn.setAttribute('aria-expanded', 'false');
+  moreBtn.setAttribute('aria-controls', overflowMenu.id);
   const toast = document.createElement('div');
   toast.className = 'kapi-toast hidden';
   toast.setAttribute('role', 'alert');
@@ -104,10 +119,11 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   soundGate.className = 'kapi-sound-gate hidden';
   soundGate.textContent = labels.enableSound;
 
-  root.append(main, pane, settingsEl, reactPanel, bar, toast, soundGate);
+  root.append(main, pane, settingsEl, reactPanel, bar, overflowMenu, toast, soundGate);
   parent.appendChild(root);
 
   const tiles = new Map<string, Tile>();
+  const buttons = new Map<ToolbarButton, HTMLButtonElement>();
   /** Mic / share state that arrived before the peer's tile existed (broadcast
    *  raced ahead of presence) — applied in ensureTile. */
   const pendingMediaState = new Map<string, { sharing?: boolean; mic?: boolean }>();
@@ -293,8 +309,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   function setLayout(mode: KapiLayout) {
     if (mode === layoutMode || !LAYOUTS.includes(mode)) return;
     layoutMode = mode;
-    const b = bar.querySelector<HTMLButtonElement>('button[data-id="layout"]');
-    if (b) b.title = `${labels.layout}: ${mode}`;
+    const b = buttons.get('layout');
+    if (b) paintButton(b, 'layout', labels.layout);
     applyLayout();
   }
 
@@ -597,7 +613,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   function showPanel(which: 'participants' | 'settings', show: boolean) {
     const el = which === 'participants' ? pane : settingsEl;
     const other = which === 'participants' ? settingsEl : pane;
-    if (show) other.classList.add('hidden');
+    if (show) {
+      closeOverflow();
+      other.classList.add('hidden');
+    }
     el.classList.toggle('hidden', !show);
   }
 
@@ -612,6 +631,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   }
 
   function toggleReactions() {
+    closeOverflow();
     reactPanel.classList.toggle('hidden');
   }
 
@@ -717,6 +737,15 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     b.setAttribute('aria-pressed', mode === 'off' ? 'false' : 'true');
     b.setAttribute('aria-disabled', unavailable ? 'true' : 'false');
     b.innerHTML = toolbarIconHtml(id, mode === 'off');
+    if (overflowMenu.contains(b)) {
+      b.setAttribute('role', 'menuitem');
+      const span = document.createElement('span');
+      span.className = 'kapi-overflow-label';
+      span.textContent = label;
+      b.appendChild(span);
+    } else {
+      b.setAttribute('role', 'button');
+    }
     // The unavailable look wins over the on/off/accent paints, so the button
     // reads as "not usable here" rather than as another toggle state.
     b.classList.toggle('is-off', mode === 'off' && !unavailable);
@@ -725,25 +754,26 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   }
 
   function updateToolbarLabels() {
-    if (!room) return;
-    for (const el of bar.querySelectorAll('button')) {
-      const b = el as HTMLButtonElement;
-      const id = b.getAttribute('data-id') as ToolbarButton | null;
-      if (!id) continue;
+    for (const [id, b] of buttons) {
       if (id === 'mic') {
-        paintButton(b, id, room.micOn ? labels.micOn : labels.micOff, room.micOn ? 'on' : 'off');
+        const on = room?.micOn ?? true;
+        paintButton(b, id, on ? labels.micOn : labels.micOff, on ? 'on' : 'off');
       } else if (id === 'cam') {
-        paintButton(b, id, room.camOn ? labels.camOn : labels.camOff, room.camOn ? 'on' : 'off');
+        const on = room?.camOn ?? true;
+        paintButton(b, id, on ? labels.camOn : labels.camOff, on ? 'on' : 'off');
       } else if (id === 'share') {
-        // Active while sharing (accent) — previously the button greyed out,
-        // which read as "disabled" instead of "in progress".
-        paintButton(b, id, room.sharing ? labels.stopShare : labels.share, room.sharing ? 'active' : 'on');
+        const sharing = room?.sharing ?? false;
+        paintButton(b, id, sharing ? labels.stopShare : labels.share, sharing ? 'active' : 'on');
       } else if (id === 'background') {
-        // Repaint on device re-check so a missing camera flips the button
-        // into the unavailable state live (hot-plug included).
         paintButton(b, id, labels.background);
+      } else if (id === 'layout') {
+        paintButton(b, id, labels.layout);
+      } else {
+        const text = (labels as Record<string, string>)[id] ?? b.title;
+        paintButton(b, id, text);
       }
     }
+    if (!room) return;
     const selfTile = tiles.get(selfId);
     if (selfTile) {
       if (room.localMedia) syncVideoVisibility(selfTile, room.localMedia);
@@ -826,6 +856,131 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     });
     return b;
   }
+
+  // ---------- toolbar overflow (Meet/Zoom-style ⋯) ----------
+  // Mic, camera and leave stay on the bar; everything else collapses from
+  // the right as the chrome shrinks. Sizes here must match .kapi-toolbar
+  // padding/gap and .kapi-toolbar button width in styles.ts.
+
+  const PINNED = new Set<ToolbarButton>(['mic', 'cam', 'hangup']);
+
+  function clusterWidth(count: number): number {
+    const btn = 44;
+    const gap = 8;
+    const pad = 26; // 12px padding × 2 + 1px border × 2
+    if (count <= 0) return pad;
+    return pad + count * btn + (count - 1) * gap;
+  }
+
+  function closeOverflow() {
+    const active = document.activeElement;
+    const restore = overflowMenu.contains(active) && !overflowMenu.classList.contains('hidden');
+    overflowMenu.classList.add('hidden');
+    moreBtn.setAttribute('aria-expanded', 'false');
+    if (restore && !moreBtn.hidden) moreBtn.focus();
+  }
+
+  function placeOverflow() {
+    if (overflowMenu.classList.contains('hidden') || moreBtn.hidden) return;
+    const rootRect = root.getBoundingClientRect();
+    const btnRect = moreBtn.getBoundingClientRect();
+    const menuW = overflowMenu.offsetWidth || 220;
+    let left = btnRect.right - rootRect.left - menuW;
+    left = Math.max(8, Math.min(left, rootRect.width - menuW - 8));
+    overflowMenu.style.left = `${left}px`;
+    overflowMenu.style.bottom = `${rootRect.bottom - btnRect.top + 8}px`;
+    overflowMenu.style.top = 'auto';
+    overflowMenu.style.right = 'auto';
+  }
+
+  function toggleOverflow() {
+    if (moreBtn.hidden) return;
+    const opening = overflowMenu.classList.contains('hidden');
+    if (!opening) {
+      closeOverflow();
+      return;
+    }
+    closeReactions();
+    overflowMenu.classList.remove('hidden');
+    moreBtn.setAttribute('aria-expanded', 'true');
+    placeOverflow();
+    overflowMenu.querySelector('button')?.focus();
+  }
+
+  function layoutToolbar() {
+    if (disposed) return;
+    const hangupBtn = buttons.get('hangup');
+    const rest = toolbarBtns.filter((id) => id !== 'hangup' && buttons.has(id));
+    const available = Math.max(0, root.clientWidth - 24);
+    const hangupSlot = hangupBtn ? 1 : 0;
+    const fits = (n: number) => clusterWidth(n) <= available;
+
+    let overflowIds: ToolbarButton[] = [];
+    const visibleIds = [...rest];
+
+    if (!fits(visibleIds.length + hangupSlot)) {
+      while (visibleIds.length) {
+        if (fits(visibleIds.length + hangupSlot + 1)) break;
+        let idx = -1;
+        for (let i = visibleIds.length - 1; i >= 0; i--) {
+          if (!PINNED.has(visibleIds[i]!)) {
+            idx = i;
+            break;
+          }
+        }
+        if (idx < 0) break;
+        overflowIds.unshift(visibleIds.splice(idx, 1)[0]!);
+      }
+    }
+
+    const showMore = overflowIds.length > 0;
+    moreBtn.hidden = !showMore;
+    if (!showMore) closeOverflow();
+
+    for (const id of visibleIds) {
+      const b = buttons.get(id);
+      if (b) bar.appendChild(b);
+    }
+    if (showMore) bar.appendChild(moreBtn);
+    else moreBtn.remove();
+    if (hangupBtn) bar.appendChild(hangupBtn);
+
+    for (const id of overflowIds) {
+      const b = buttons.get(id);
+      if (b) overflowMenu.appendChild(b);
+    }
+
+    updateToolbarLabels();
+    if (!overflowMenu.classList.contains('hidden')) placeOverflow();
+  }
+
+  moreBtn.addEventListener('click', () => {
+    unlockSound();
+    toggleOverflow();
+  });
+  overflowMenu.addEventListener('click', (e) => {
+    if (e.target instanceof Element && e.target.closest('button')) closeOverflow();
+  });
+
+  const onDocPointerForOverflow = (e: Event) => {
+    if (overflowMenu.classList.contains('hidden')) return;
+    const target = e.target;
+    if (target instanceof Element && (target.closest('.kapi-overflow') || target.closest('button[data-id="more"]'))) {
+      return;
+    }
+    closeOverflow();
+  };
+  document.addEventListener('pointerdown', onDocPointerForOverflow);
+  unsubs.push(() => document.removeEventListener('pointerdown', onDocPointerForOverflow));
+
+  const onKeyForOverflow = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') closeOverflow();
+  };
+  document.addEventListener('keydown', onKeyForOverflow);
+  unsubs.push(() => document.removeEventListener('keydown', onKeyForOverflow));
+
+  const toolbarRo = new ResizeObserver(() => layoutToolbar());
+  unsubs.push(() => toolbarRo.disconnect());
 
   // ---------- lifecycle ----------
 
@@ -920,8 +1075,12 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
           : id === 'share'
             ? labels.share
             : labels[id];
-    bar.appendChild(makeButton(id, text, actions[id]));
+    const b = makeButton(id, text, actions[id]);
+    buttons.set(id, b);
+    bar.appendChild(b);
   }
+  layoutToolbar();
+  toolbarRo.observe(root);
 
   // Wire UI events before announce so a sync `peers` roster is not missed.
   void KapiRoom.join({ ...options, autoJoin: false })

@@ -54,7 +54,7 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
     tileBg?: string
     toolbarBg?: string
   }
-  labels?: Record<string, string>  // see DEFAULT_LABELS — incl. layout / pin / unpin
+  labels?: Record<string, string>  // see DEFAULT_LABELS — incl. layout / pin / unpin / more
   videoFit?: 'contain' | 'cover'  // default 'contain' — full frame, true aspect
                                   // ratio. 'cover' fills the tile and crops
                                   // overflow. Screen shares always use
@@ -68,6 +68,9 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
 ### Built-in layout interactions
 
 - **View button** (toolbar `'layout'`) cycles `grid → spotlight → sidebar`.
+- **Narrow toolbar**: controls that don't fit move into a ⋯ More menu
+  (mic, camera and hangup stay on the bar). Override the label with
+  `labels.more`.
 - **Click a tile** (or focus it and press Enter/Space) to **pin** that peer —
   the pinned tile takes the spotlight/sidebar stage. Click again to unpin.
 - **Active speaker**: the built-in UI listens to audio levels (WebAudio RMS)

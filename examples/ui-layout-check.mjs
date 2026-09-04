@@ -215,7 +215,65 @@ async function main() {
       { timeout: 8000 },
     );
 
-    console.log('ok: ui layouts, cycling, pinning, setLayout, remote mute');
+    // 6. narrow chrome: toolbar stays one row; extras go into ⋯ More
+    const wideOverflow = await pageObj.evaluate(() => {
+      const more = document.querySelectorAll('.kapi-root')[0].querySelector('button[data-id="more"]');
+      return !more || more.hidden;
+    });
+    assert.equal(wideOverflow, true, 'more button hidden when the bar fits');
+
+    await pageObj.evaluate(() => {
+      document.getElementById('a').style.width = '260px';
+    });
+    await pageObj.waitForFunction(
+      () => {
+        const more = document.querySelectorAll('.kapi-root')[0].querySelector('button[data-id="more"]');
+        return more && !more.hidden;
+      },
+      undefined,
+      { timeout: 5000 },
+    );
+    const overflowState = await pageObj.evaluate(() => {
+      const r = document.querySelectorAll('.kapi-root')[0];
+      const bar = r.querySelector('.kapi-toolbar');
+      return {
+        barH: bar.offsetHeight,
+        layoutInOverflow: !!r.querySelector('.kapi-overflow button[data-id="layout"]'),
+        micInBar: !!r.querySelector('.kapi-toolbar button[data-id="mic"]'),
+        hangupInBar: !!r.querySelector('.kapi-toolbar button[data-id="hangup"]'),
+      };
+    });
+    assert.equal(overflowState.layoutInOverflow, true, 'layout moved into overflow');
+    assert.equal(overflowState.micInBar, true, 'mic stays on the bar');
+    assert.equal(overflowState.hangupInBar, true, 'hangup stays on the bar');
+    assert.ok(overflowState.barH < 80, `toolbar is one row (height ${overflowState.barH})`);
+
+    await pageObj.evaluate(() => {
+      document.querySelectorAll('.kapi-root')[0].querySelector('button[data-id="more"]').click();
+    });
+    await pageObj.evaluate(() => {
+      document
+        .querySelectorAll('.kapi-root')[0]
+        .querySelector('.kapi-overflow button[data-id="layout"]')
+        .click();
+    });
+    s = await state(0);
+    assert.deepEqual(s.modes, [], 'layout action from overflow still cycles');
+
+    await pageObj.evaluate(() => {
+      document.getElementById('a').style.width = '800px';
+    });
+    await pageObj.waitForFunction(
+      () => {
+        const r = document.querySelectorAll('.kapi-root')[0];
+        const more = r.querySelector('button[data-id="more"]');
+        return more && more.hidden && r.querySelector('.kapi-toolbar button[data-id="layout"]');
+      },
+      undefined,
+      { timeout: 5000 },
+    );
+
+    console.log('ok: ui layouts, cycling, pinning, setLayout, remote mute, toolbar overflow');
   } finally {
     await browser?.close().catch(() => undefined);
     server.kill();
