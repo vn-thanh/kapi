@@ -110,7 +110,13 @@ export function createSpeakerWatcher(): SpeakerWatcher {
         bestRms = rms;
       }
     }
-    if (!best || bestRms < THRESHOLD) return; // silence — keep current dominant
+    if (!best || bestRms < THRESHOLD) {
+      // Silence: keep `dominant`, but drop a pending candidate — otherwise two
+      // noise bursts separated by silence confirm like continuous speech.
+      candidate = null;
+      candidateTicks = 0;
+      return;
+    }
     if (best === dominant) {
       candidate = null;
       candidateTicks = 0;

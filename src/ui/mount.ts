@@ -1126,6 +1126,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     })
     .catch((err) => {
       reportError(err);
+      // Join failed (e.g. permission denied) — everything above was allocated
+      // synchronously, so without disposing, each retry leaks the frame
+      // watchdog, document listeners, and the ResizeObserver.
+      dispose();
     });
 
   return {

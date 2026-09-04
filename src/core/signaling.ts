@@ -58,6 +58,10 @@ export function createBroadcastSignalAdapter(
   /** Other peers we have seen in this channel. */
   const roster = new Map<string, string | undefined>();
   let myDisplayName: string | undefined;
+  /** Only introduce ourselves while our room is actually joined — after
+   *  hangup() (no page unload) replying here made joiners offer into the
+   *  void, leaving a permanent ghost tile eating a maxPeers slot. */
+  let joined = false;
 
   const deliver = (msg: SignalMessage) => {
     handlers.forEach((fn) => fn(msg));
@@ -75,12 +79,14 @@ export function createBroadcastSignalAdapter(
       // Previously every tab forwarded its whole cached roster — crashed tabs
       // never send `leave` on BroadcastChannel, so ghosts accumulated and each
       // new joiner wasted offer/ICE attempts on dead peer ids.
-      bc.postMessage({
-        type: 'peers',
-        peers: [{ peerId, displayName: myDisplayName }],
-        _from: peerId,
-        _to: msg.peerId,
-      });
+      if (joined) {
+        bc.postMessage({
+          type: 'peers',
+          peers: [{ peerId, displayName: myDisplayName }],
+          _from: peerId,
+          _to: msg.peerId,
+        });
+      }
     } else if (msg.type === 'leave') {
       roster.delete(msg.peerId);
     }
@@ -93,7 +99,12 @@ export function createBroadcastSignalAdapter(
 
   return {
     send(msg) {
-      if (msg.type === 'join') myDisplayName = msg.displayName;
+      if (msg.type === 'join') {
+        myDisplayName = msg.displayName;
+        joined = true;
+      } else if (msg.type === 'leave') {
+        joined = false;
+      }
       const withFrom =
         msg.type === 'offer' || msg.type === 'answer' || msg.type === 'ice'
           ? { ...msg, from: peerId, _from: peerId }

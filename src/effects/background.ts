@@ -42,14 +42,17 @@ export class BackgroundProcessor {
   private readonly blurAmount: number;
   private readonly modelUrl: string;
   private lastTs = -1;
+  /** Bumped by stop() so a model load it interrupted can be detected. */
+  private generation = 0;
 
   constructor(opts: BackgroundProcessorOptions = {}) {
     this.modelUrl = opts.modelUrl ?? DEFAULT_MODEL_URL;
     this.blurAmount = opts.blurAmount ?? 12;
   }
 
-  private async ensureSegmenter(): Promise<ImageSegmenter> {
+  private async ensureSegmenter(): Promise<ImageSegmenter | null> {
     if (this.segmenter) return this.segmenter;
+    const gen = this.generation;
     // Dedupe concurrent starts so the wasm/model loads exactly once.
     this.segmenterReady ??= (async () => {
       const { FilesetResolver, ImageSegmenter } = await import('@mediapipe/tasks-vision');
@@ -74,8 +77,24 @@ export class BackgroundProcessor {
         outputConfidenceMasks: true,
       });
     })();
-    this.segmenter = await this.segmenterReady;
-    this.segmenterReady = null;
+    const pending = this.segmenterReady;
+    let seg: ImageSegmenter;
+    try {
+      seg = await pending;
+    } catch (err) {
+      // A failed load must not poison the dedupe slot — retry next time.
+      if (this.segmenterReady === pending) this.segmenterReady = null;
+      throw err;
+    }
+    if (this.segmenterReady === pending) this.segmenterReady = null;
+    if (this.segmenter) return this.segmenter; // a concurrent call adopted it
+    if (gen !== this.generation) {
+      // stop() ran while the model was loading — without closing here the
+      // segmenter is unreachable and leaks (GPU wasm instance).
+      seg.close();
+      return null;
+    }
+    this.segmenter = seg;
     return this.segmenter;
   }
 
@@ -87,7 +106,9 @@ export class BackgroundProcessor {
       this.bgImage = null;
     }
 
-    await this.ensureSegmenter();
+    const seg = await this.ensureSegmenter();
+    // stop() interrupted the model load — bail with audio-only.
+    if (!seg) return new MediaStream(source.getAudioTracks());
 
     if (!this.video) {
       this.video = document.createElement('video');
@@ -151,6 +172,7 @@ export class BackgroundProcessor {
   }
 
   stop() {
+    this.generation++;
     this.stopLoop();
     this.outStream?.getTracks().forEach((t) => {
       if (t.kind === 'video') t.stop();

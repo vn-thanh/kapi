@@ -108,15 +108,39 @@ export class KapiRoom {
         });
     });
 
-    this.rawCameraStream = await getLocalStream(this.options.media!);
-    this.localStream = this.rawCameraStream;
-    this.applyCamState();
+    try {
+      this.rawCameraStream = await getLocalStream(this.options.media!);
+      this.localStream = this.rawCameraStream;
+      this.applyCamState();
 
-    const bg = this.options.effects?.background ?? 'none';
-    this.currentBackground = bg === undefined ? 'none' : bg;
-    if (bg !== 'none') await this.setBackground(bg);
+      const bg = this.options.effects?.background ?? 'none';
+      this.currentBackground = bg === undefined ? 'none' : bg;
+      if (bg !== 'none') {
+        // A broken effect (offline CDN, dead model URL) must not block joining.
+        try {
+          await this.setBackground(bg);
+        } catch (err) {
+          console.warn('[kapi] background effect unavailable, continuing without it', err);
+          this.currentBackground = 'none';
+        }
+      }
 
-    this.emit('local-stream', { stream: this.localStream });
+      this.emit('local-stream', { stream: this.localStream });
+    } catch (err) {
+      // join() is about to reject — nothing else will, so tear down what
+      // start() wired up (unload listeners, signal subscription, tracks).
+      if (this.options.leaveOnUnload && typeof window !== 'undefined') {
+        window.removeEventListener('pagehide', this.onPageUnload);
+        window.removeEventListener('beforeunload', this.onPageUnload);
+      }
+      this.unsubSignal?.();
+      this.unsubSignal = null;
+      this.closed = true;
+      this.rawCameraStream?.getTracks().forEach((t) => t.stop());
+      this.rawCameraStream = null;
+      this.localStream = null;
+      throw err;
+    }
 
     // Defer announce so callers can attach listeners after `await KapiRoom.join()`
     // (or mount's `.then`) before `peers` arrives — otherwise peer-joined is missed
@@ -145,7 +169,7 @@ export class KapiRoom {
   }
 
   private async ensurePeer(remoteId: string, displayName?: string): Promise<KapiPeer | null> {
-    if (remoteId === this.options.peerId) return null;
+    if (remoteId === this.options.peerId || this.closed) return null;
     let peer = this.peers.get(remoteId);
     if (peer) {
       if (displayName) this.peerMeta.set(remoteId, { peerId: remoteId, displayName });
@@ -210,6 +234,12 @@ export class KapiRoom {
     });
 
     if (this.localStream) await peer.addLocalTracks(this.localStream);
+    // hangup() can land while tracks were attaching — close the fresh
+    // connection instead of re-populating peers on a dead room.
+    if (this.closed) {
+      peer.close();
+      return null;
+    }
     this.peers.set(remoteId, peer);
     this.peerMeta.set(remoteId, { peerId: remoteId, displayName });
     this.emit('peer-joined', { peerId: remoteId, displayName });
@@ -315,9 +345,11 @@ export class KapiRoom {
           const from = msg.from;
           if (!from || msg.to !== this.options.peerId) return;
           const peer = await this.ensurePeer(from);
-          if (!peer) return;
+          if (!peer || this.closed) return;
           const answer = await peer.handleOffer(msg.sdp);
-          if (answer) {
+          // hangup() may land mid-answer — sending it would connect the
+          // remote to a hung-up tab (zombie participant).
+          if (answer && !this.closed) {
             this.options.signal.send({
               type: 'answer',
               sdp: answer,
@@ -416,6 +448,12 @@ export class KapiRoom {
     if (this.closed) return;
     if (enabled) {
       const stream = await getDisplayStream();
+      // The screen picker can outlive the room — hangup() while it was open
+      // left the granted stream assigned to a dead room, running forever.
+      if (this.closed) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       const track = stream.getVideoTracks()[0];
       if (!track) {
         stream.getTracks().forEach((t) => t.stop());
@@ -424,7 +462,13 @@ export class KapiRoom {
       // Prefer quality for text/UI on shared screens
       if ('contentHint' in track) track.contentHint = 'detail';
       this.screenStream = stream;
-      track.onended = () => void this.shareScreen(false);
+      // Browser UI "stop sharing": shareScreen(false) can reject (camera
+      // restore hits a broken effect/CDN) — surface it, never drop it.
+      track.onended = () => {
+        void this.shareScreen(false).catch((err) => {
+          this.emit('error', { error: err instanceof Error ? err : new Error(String(err)) });
+        });
+      };
       try {
         await this.replaceVideoTrack(track);
       } catch (err) {
@@ -578,6 +622,11 @@ export class KapiRoom {
         audio: { deviceId: { exact: deviceId } },
         video: false,
       });
+      // Permission prompts can outlive the room — stop the granted track.
+      if (this.closed) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       const track = stream.getAudioTracks()[0];
       if (!track) return;
       for (const [id, peer] of this.peers) {
@@ -607,6 +656,10 @@ export class KapiRoom {
       video: { deviceId: { exact: deviceId } },
       audio: false,
     });
+    if (this.closed) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
     const track = stream.getVideoTracks()[0];
     if (!track) return;
     // Respect the camera toggle — a fresh track defaults to enabled=true and

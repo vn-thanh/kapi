@@ -304,4 +304,32 @@ await waitFor(() => eventsA.left >= 2, 'A sees B leave');
 await roomA.hangup();
 
 assert(eventsA.errors.length === 0, 'A stayed error-free');
-console.log('ok: negotiation, tracks, rejoin, reactions, hangup');
+
+// Hangup mid-offer: an offer arriving while the room is torn down must not
+// produce an answer or a zombie peer-joined (previously connected remotes to
+// a hung-up tab).
+{
+  const roomC = await KapiRoom.join({
+    roomId: 't',
+    peerId: 'c-third',
+    signal: bus.createAdapter('c-third'),
+  });
+  await sleep(50);
+  let cJoins = 0;
+  const cErrors = [];
+  roomC.on('peer-joined', () => cJoins++);
+  roomC.on('error', ({ error }) => cErrors.push(error.message));
+  const spy = bus.createAdapter('late-offerer');
+  const answers = [];
+  spy.onMessage((m) => {
+    if (m.type === 'answer') answers.push(m);
+  });
+  spy.send({ type: 'offer', sdp: 'fake-offer', to: 'c-third' });
+  await Promise.resolve(); // let c-third start processing the offer, then:
+  await roomC.hangup(); // tear it down mid-offer
+  await sleep(100);
+  assert(answers.length === 0, 'hung-up room must not answer');
+  assert(cJoins === 0, 'hung-up room must not gain a peer');
+  assert(cErrors.length === 0, `C error-free (got ${cErrors.join('; ')})`);
+}
+console.log('ok: negotiation, tracks, rejoin, reactions, hangup, mid-offer hangup');
