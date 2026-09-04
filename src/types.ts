@@ -29,9 +29,15 @@ export type ToolbarButton =
   | 'share'
   | 'react'
   | 'participants'
+  | 'layout'
   | 'background'
   | 'settings'
   | 'hangup';
+
+/** Tile arrangement of the built-in UI. `'grid'` tiles everyone equally;
+ *  `'spotlight'` gives one featured tile the stage with a bottom filmstrip;
+ *  `'sidebar'` puts the filmstrip in a right-hand column instead. */
+export type KapiLayout = 'grid' | 'spotlight' | 'sidebar';
 
 export interface KapiMediaOptions {
   audio?: boolean | MediaTrackConstraints;
@@ -117,6 +123,12 @@ export interface KapiUiLabels {
   background?: string;
   settings?: string;
   hangup?: string;
+  /** Toolbar view-cycle button tooltip. */
+  layout?: string;
+  /** Click-to-pin tile tooltip (pinned tiles win the spotlight/sidebar stage). */
+  pin?: string;
+  /** Tooltip of an already-pinned tile. */
+  unpin?: string;
   you?: string;
   enableSound?: string;
 }
@@ -125,6 +137,9 @@ export interface KapiMountOptions extends KapiRoomOptions {
   toolbar?: ToolbarButton[];
   theme?: KapiUiTheme;
   labels?: KapiUiLabels;
+  /** Initial tile layout (default `'grid'`). Switchable at runtime via the
+   *  `layout` toolbar button or `handle.setLayout()`. */
+  layout?: KapiLayout;
   /**
    * How camera video fits inside its tile. `'contain'` (default) always shows
    * the full frame at its true aspect ratio; `'cover'` fills the tile and
@@ -139,5 +154,9 @@ export interface KapiMountOptions extends KapiRoomOptions {
 
 export interface KapiMountHandle {
   room: import('./core/room').KapiRoom | null;
+  /** Current tile layout. */
+  readonly layout: KapiLayout;
+  /** Switch the tile layout at runtime. */
+  setLayout: (layout: KapiLayout) => void;
   dispose: () => void;
 }

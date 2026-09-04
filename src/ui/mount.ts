@@ -2,11 +2,13 @@ import { KapiRoom } from '../core/room';
 import { DEFAULT_LABELS, DEFAULT_THEME, DEFAULT_TOOLBAR } from '../options';
 import type {
   BackgroundMode,
+  KapiLayout,
   KapiMountHandle,
   KapiMountOptions,
   ToolbarButton,
 } from '../types';
 import { toolbarIconHtml, statusIconHtml } from './icons';
+import { createSpeakerWatcher } from './speaker';
 import { injectStyles } from './styles';
 
 type Tile = {
@@ -76,6 +78,15 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
   const grid = document.createElement('div');
   grid.className = 'kapi-grid';
+  // spotlight/sidebar hosts: the featured tile goes to the stage, everyone
+  // else to the strip (grid mode hides both and uses .kapi-grid alone).
+  const main = document.createElement('div');
+  main.className = 'kapi-main';
+  const stage = document.createElement('div');
+  stage.className = 'kapi-stage';
+  const strip = document.createElement('div');
+  strip.className = 'kapi-strip';
+  main.append(grid, stage, strip);
   const bar = document.createElement('div');
   bar.className = 'kapi-toolbar';
   const pane = document.createElement('div');
@@ -93,7 +104,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   soundGate.className = 'kapi-sound-gate hidden';
   soundGate.textContent = labels.enableSound;
 
-  root.append(grid, pane, settingsEl, reactPanel, bar, toast, soundGate);
+  root.append(main, pane, settingsEl, reactPanel, bar, toast, soundGate);
   parent.appendChild(root);
 
   const tiles = new Map<string, Tile>();
@@ -113,6 +124,25 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   let bgMode: BackgroundMode = options.effects?.background ?? 'none';
   const unsubs: Array<() => void> = [];
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // ---------- layout modes (grid / spotlight / sidebar) ----------
+
+  const LAYOUTS: readonly KapiLayout[] = ['grid', 'spotlight', 'sidebar'];
+  let layoutMode: KapiLayout =
+    options.layout && LAYOUTS.includes(options.layout) ? options.layout : 'grid';
+  /** Click-pinned peer — wins the spotlight/sidebar stage (after screen shares). */
+  let pinnedPeer: string | null = null;
+  /** Last audible peer — the auto-featured candidate when nothing is pinned. */
+  let dominant: string | null = null;
+  const speakers = createSpeakerWatcher();
+  unsubs.push(speakers.dispose);
+  unsubs.push(
+    speakers.onspeaking((peerId) => {
+      dominant = peerId;
+      for (const t of tiles.values()) t.wrap.classList.toggle('speaking', t.wrap.dataset.peerId === peerId);
+      applyLayout();
+    }),
+  );
 
   // ---------- frozen-frame watchdog ----------
 
@@ -186,6 +216,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   function unlockSound() {
     if (disposed || soundUnlocked) return;
     soundUnlocked = true;
+    speakers.wake();
     soundGate.classList.add('hidden');
     for (const audio of remoteAudio.values()) {
       audio.muted = false;
@@ -205,7 +236,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
   // ---------- tiles ----------
 
-  function layoutGrid() {
+  /** Column/row math for grid mode only. */
+  function sizeGrid() {
     let shares = 0;
     let cams = 0;
     for (const tile of tiles.values()) {
@@ -226,6 +258,59 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     grid.style.gridTemplateRows = rows.join(' ') || 'none';
   }
 
+  /** Spotlight/sidebar featured tile priority: screen share > pinned >
+   *  dominant speaker > local tile. */
+  function pickFeatured(): Tile | null {
+    for (const t of tiles.values()) {
+      if (t.wrap.classList.contains('screenshare')) return t;
+    }
+    if (pinnedPeer) return tiles.get(pinnedPeer) ?? null;
+    if (dominant) return tiles.get(dominant) ?? null;
+    return tiles.get(selfId) ?? tiles.values().next().value ?? null;
+  }
+
+  /** Re-home tiles for the current layout mode and re-apply grid sizing.
+   *  The single entry point every tile/peer/share change funnels through. */
+  function applyLayout() {
+    root.classList.toggle('layout-spotlight', layoutMode === 'spotlight');
+    root.classList.toggle('layout-sidebar', layoutMode === 'sidebar');
+    for (const t of tiles.values()) t.wrap.classList.toggle('featured', false);
+    if (layoutMode === 'grid') {
+      grid.append(...[...tiles.values()].map((t) => t.wrap));
+      sizeGrid();
+      return;
+    }
+    const featured = pickFeatured();
+    for (const t of tiles.values()) t.wrap.classList.toggle('featured', t === featured);
+    if (featured) stage.append(featured.wrap);
+    const rest = [...tiles.values()].filter((t) => t !== featured).map((t) => t.wrap);
+    if (rest.length) strip.append(...rest);
+  }
+
+  function setLayout(mode: KapiLayout) {
+    if (mode === layoutMode || !LAYOUTS.includes(mode)) return;
+    layoutMode = mode;
+    const b = bar.querySelector<HTMLButtonElement>('button[data-id="layout"]');
+    if (b) b.title = `${labels.layout}: ${mode}`;
+    applyLayout();
+  }
+
+  function setPinned(peerId: string | null) {
+    if (pinnedPeer === peerId) return;
+    pinnedPeer = peerId;
+    for (const t of tiles.values()) {
+      const on = t.wrap.dataset.peerId === peerId;
+      t.wrap.classList.toggle('pinned', on);
+      t.wrap.setAttribute('aria-pressed', on ? 'true' : 'false');
+      t.wrap.title = on ? labels.unpin : labels.pin;
+    }
+    applyLayout();
+  }
+
+  function togglePin(peerId: string) {
+    setPinned(pinnedPeer === peerId ? null : peerId);
+  }
+
   function ensureTile(peerId: string, label: string): Tile {
     let tile = tiles.get(peerId);
     if (tile) {
@@ -238,6 +323,18 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     wrap.className = 'kapi-tile video-off';
     wrap.dataset.peerId = peerId;
     if (peerId === selfId) wrap.classList.add('kapi-local');
+    // Click / Enter / Space pins the peer — pinned wins the spotlight and
+    // sidebar stage. Clicking the pinned tile unpins it.
+    wrap.tabIndex = 0;
+    wrap.setAttribute('role', 'button');
+    wrap.setAttribute('aria-pressed', 'false');
+    wrap.title = labels.pin;
+    wrap.addEventListener('click', () => togglePin(peerId));
+    wrap.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      togglePin(peerId);
+    });
 
     const video = document.createElement('video');
     video.autoplay = true;
@@ -285,7 +382,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       pendingShareState.delete(peerId);
     }
     armFrameWatch(tile);
-    layoutGrid();
+    applyLayout();
     return tile;
   }
 
@@ -335,6 +432,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   }
 
   function attachLocalStream(stream: MediaStream) {
+    speakers.watch(selfId, stream);
     const tile = ensureTile(selfId, selfName === labels.you ? labels.you : `${selfName} (${labels.you})`);
     const chip = tile.avatar.querySelector('.kapi-avatar-initials');
     if (chip) chip.textContent = initials(selfName);
@@ -350,7 +448,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     tile.wrap.classList.toggle('mirror', !(room?.sharing ?? false));
     tile.wrap.classList.toggle('screenshare', room?.sharing ?? false);
     syncVideoVisibility(tile, stream);
-    layoutGrid();
+    applyLayout();
   }
 
   function mergeRemoteTrack(peerId: string, track: MediaStreamTrack): MediaStream {
@@ -365,6 +463,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
   function attachRemoteTrack(peerId: string, track: MediaStreamTrack) {
     const stream = mergeRemoteTrack(peerId, track);
+    speakers.watch(peerId, stream);
     const meta = room?.participants.find((p) => p.peerId === peerId);
     const tile = ensureTile(peerId, meta?.displayName ?? peerId);
     if (tile.video.srcObject !== stream) {
@@ -435,6 +534,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     tile.wrap.remove();
     tiles.delete(peerId);
     pendingShareState.delete(peerId);
+    speakers.forget(peerId);
+    if (pinnedPeer === peerId) pinnedPeer = null;
     remoteStreams.get(peerId)?.getTracks().forEach((t) => t.stop());
     remoteStreams.delete(peerId);
     const audio = remoteAudio.get(peerId);
@@ -443,7 +544,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       audio.remove();
       remoteAudio.delete(peerId);
     }
-    layoutGrid();
+    applyLayout();
   }
 
   // ---------- panels ----------
@@ -730,6 +831,9 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       if (opening) renderParticipants();
       showPanel('participants', opening);
     },
+    layout: () => {
+      setLayout(LAYOUTS[(LAYOUTS.indexOf(layoutMode) + 1) % LAYOUTS.length]!);
+    },
     background: () => {
       if (!room) return;
       // Compositing needs camera frames — with no camera, say so like mic/cam
@@ -796,7 +900,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
           }
           if (tile.wrap.classList.contains('screenshare') === sharing) return;
           tile.wrap.classList.toggle('screenshare', sharing);
-          layoutGrid();
+          applyLayout();
         }),
         r.on('peer-state', ({ peerId, state }) => {
           const tile = tiles.get(peerId);
@@ -820,6 +924,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     get room() {
       return room;
     },
+    get layout() {
+      return layoutMode;
+    },
+    setLayout,
     dispose,
   };
 }

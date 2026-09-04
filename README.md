@@ -61,7 +61,8 @@ const api = mount(document.getElementById('meet')!, {
   peerId: crypto.randomUUID(),
   displayName: 'Ada',
   signal,
-  toolbar: ['mic', 'cam', 'share', 'react', 'participants', 'background', 'settings', 'hangup'],
+  toolbar: ['mic', 'cam', 'share', 'react', 'participants', 'layout', 'background', 'settings', 'hangup'],
+  layout: 'spotlight', // 'grid' (default) | 'spotlight' | 'sidebar'
   onHangup: () => api.dispose(),
 })
 ```
@@ -105,7 +106,7 @@ Helpers: `createBroadcastSignalAdapter`, `createLocalSignalBus`.
 | `videoCodec` | — | e.g. `video/VP8` |
 | `autoJoin` | `true` | Emit `join` on start |
 
-UI: `toolbar`, `theme` (CSS vars), `labels`, `videoFit` (`'contain'` default — full frame at true aspect ratio; `'cover'` crops to fill; screen shares always `'contain'`), `onHangup`, `onReady`, `onError`. Screen-share tiles are promoted to a full-width stage so shared content stays readable.
+UI: `toolbar`, `layout` (`'grid'` default | `'spotlight'` | `'sidebar'` — switch at runtime via the toolbar view button or `handle.setLayout()`), `theme` (CSS vars), `labels`, `videoFit` (`'contain'` default — full frame at true aspect ratio; `'cover'` crops to fill; screen shares always `'contain'`), `onHangup`, `onReady`, `onError`. Screen-share tiles are promoted to a full-width stage so shared content stays readable. Spotlight/sidebar put one tile on a stage (screen share > pinned > active speaker > you); click any tile to pin it, click again to unpin; the speaking tile gets an active-speaker ring.
 
 ## Limits
 

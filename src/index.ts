@@ -28,6 +28,7 @@ export type {
   RoomEvent,
   RoomEventMap,
   ToolbarButton,
+  KapiLayout,
   KapiUiTheme,
   KapiUiLabels,
 } from './types';

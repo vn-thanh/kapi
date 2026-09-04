@@ -16,6 +16,7 @@ export const DEFAULT_TOOLBAR: ToolbarButton[] = [
   'share',
   'react',
   'participants',
+  'layout',
   'background',
   'settings',
   'hangup',
@@ -44,6 +45,9 @@ export const DEFAULT_LABELS: Required<KapiUiLabels> = {
   background: 'Background',
   settings: 'Settings',
   hangup: 'Leave',
+  layout: 'View: grid',
+  pin: 'Pin tile',
+  unpin: 'Unpin tile',
   you: 'You',
   enableSound: 'Tap to enable sound',
 };

@@ -56,6 +56,31 @@ export function injectStyles() {
 .kapi-root.kapi-fit-cover .kapi-tile video {
   object-fit: cover;
 }
+/* Tiles are click-to-pin — make that discoverable and keyboard-visible. */
+.kapi-tile {
+  cursor: pointer;
+}
+.kapi-tile:focus-visible {
+  outline: 2px solid var(--kapi-accent, #3b82f6);
+  outline-offset: 2px;
+}
+/* Active-speaker ring (WebAudio dominant speaker) and click-pinned state. */
+.kapi-tile.speaking {
+  border-color: var(--kapi-accent, #3b82f6);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--kapi-accent, #3b82f6) 45%, transparent);
+}
+.kapi-tile.pinned {
+  border-color: color-mix(in srgb, var(--kapi-accent, #3b82f6) 55%, transparent);
+}
+.kapi-tile.pinned::after {
+  content: '📌';
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  font-size: 14px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+}
 /* ---------- screen-share stage ----------
    The sharer's tile (local preview and remote alike) is promoted to a stage:
    it is placed first, spans the full grid width, and takes the lion's share
@@ -68,6 +93,62 @@ export function injectStyles() {
 .kapi-tile.screenshare video {
   /* Screen content must never be cropped — even under videoFit: 'cover'. */
   object-fit: contain;
+}
+
+/* ---------- layout modes ----------
+   grid (default): every tile lives in .kapi-grid.
+   spotlight: featured tile fills .kapi-stage, everyone else in a bottom
+   filmstrip. sidebar: same stage, filmstrip as a right-hand column. */
+.kapi-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.kapi-stage,
+.kapi-strip {
+  display: none;
+  min-height: 0;
+  min-width: 0;
+}
+.kapi-root.layout-spotlight .kapi-grid,
+.kapi-root.layout-sidebar .kapi-grid {
+  display: none;
+}
+.kapi-root.layout-spotlight .kapi-stage,
+.kapi-root.layout-sidebar .kapi-stage {
+  display: grid;
+  flex: 1;
+  padding: 12px;
+}
+.kapi-stage > .kapi-tile {
+  grid-area: 1 / 1;
+}
+.kapi-root.layout-spotlight .kapi-strip {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  padding: 0 12px 12px;
+  height: clamp(96px, 18vh, 160px);
+  overflow-x: auto;
+}
+.kapi-root.layout-spotlight .kapi-strip .kapi-tile {
+  flex: 1 0 150px;
+  height: 100%;
+}
+.kapi-root.layout-sidebar .kapi-main {
+  flex-direction: row;
+}
+.kapi-root.layout-sidebar .kapi-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  width: clamp(170px, 22vw, 280px);
+  overflow-y: auto;
+}
+.kapi-root.layout-sidebar .kapi-strip .kapi-tile {
+  flex: 1 0 120px;
 }
 .kapi-tile.video-off video {
   opacity: 0;

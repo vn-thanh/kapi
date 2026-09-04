@@ -37,7 +37,15 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
 ```ts
 {
   ...roomOptions
-  toolbar?: Array<'mic'|'cam'|'share'|'react'|'participants'|'background'|'settings'|'hangup'>
+  toolbar?: Array<'mic'|'cam'|'share'|'react'|'participants'|'layout'|'background'|'settings'|'hangup'>
+  layout?: 'grid' | 'spotlight' | 'sidebar'  // default 'grid' — initial tile layout.
+                                             // Switch at runtime via the 'layout'
+                                             // toolbar button (cycles) or
+                                             // handle.setLayout(). Spotlight/sidebar
+                                             // feature one tile on a stage: screen
+                                             // share > pinned > active speaker > you.
+                                             // Everyone else sits in a filmstrip
+                                             // (bottom strip / right column).
   theme?: {
     bg?: string
     fg?: string
@@ -46,7 +54,7 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
     tileBg?: string
     toolbarBg?: string
   }
-  labels?: Record<string, string>  // see DEFAULT_LABELS
+  labels?: Record<string, string>  // see DEFAULT_LABELS — incl. layout / pin / unpin
   videoFit?: 'contain' | 'cover'  // default 'contain' — full frame, true aspect
                                   // ratio. 'cover' fills the tile and crops
                                   // overflow. Screen shares always use
@@ -56,6 +64,16 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
   onError?: (error: Error) => void
 }
 ```
+
+### Built-in layout interactions
+
+- **View button** (toolbar `'layout'`) cycles `grid → spotlight → sidebar`.
+- **Click a tile** (or focus it and press Enter/Space) to **pin** that peer —
+  the pinned tile takes the spotlight/sidebar stage. Click again to unpin.
+- **Active speaker**: the built-in UI listens to audio levels (WebAudio RMS)
+  and rings the speaking tile; in spotlight/sidebar the stage follows the
+  dominant speaker while nothing is pinned.
+- **Screen share always wins the stage** in every layout.
 
 ## Room events (`room.on(event, handler)`)
 
