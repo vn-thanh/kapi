@@ -60,6 +60,9 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
   const root = document.createElement('div');
   root.className = 'kapi-root';
+  // 'contain' (default) keeps every frame fully visible at its true aspect
+  // ratio; 'cover' restores edge-to-edge cropping for camera tiles.
+  if (options.videoFit === 'cover') root.classList.add('kapi-fit-cover');
   for (const [key, value] of Object.entries({
     bg: theme.bg,
     fg: theme.fg,
@@ -94,6 +97,9 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   parent.appendChild(root);
 
   const tiles = new Map<string, Tile>();
+  /** Screen-share state that arrived before the peer's tile existed (share
+   *  broadcast raced ahead of presence) — applied in ensureTile. */
+  const pendingShareState = new Map<string, boolean>();
   /** One managed stream per remote peer — never trust `ontrack` stream
    *  identity: with replaceTrack/renegotiation browsers may report audio and
    *  video on *different* MediaStream objects (or none at all), which used to
@@ -171,13 +177,24 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   // ---------- tiles ----------
 
   function layoutGrid() {
-    const n = Math.max(1, tiles.size);
-    const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+    let shares = 0;
+    let cams = 0;
+    for (const tile of tiles.values()) {
+      if (tile.wrap.classList.contains('screenshare')) shares++;
+      else cams++;
+    }
+    // Stage tiles span the full grid width, so columns only need to fit the
+    // remaining (camera) tiles.
+    const cols = cams <= 1 ? 1 : cams <= 4 ? 2 : 3;
+    const camRows = Math.ceil(cams / cols);
     // Size rows explicitly: auto rows sized themselves to the video's
-    // intrinsic resolution (e.g. 1280×720) and blew out of the grid.
-    const rows = Math.ceil(n / cols);
+    // intrinsic resolution (e.g. 1280×720) and blew out of the grid. Stage
+    // rows take ~2.5× a camera row so shared screens stay readable.
+    const rows: string[] = [];
+    if (shares > 0) rows.push(`repeat(${shares}, minmax(0, 2.5fr))`);
+    if (camRows > 0) rows.push(`repeat(${camRows}, minmax(0, 1fr))`);
     grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-    grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+    grid.style.gridTemplateRows = rows.join(' ') || 'none';
   }
 
   function ensureTile(peerId: string, label: string): Tile {
@@ -233,6 +250,11 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       frameHandle: null,
     };
     tiles.set(peerId, tile);
+    const pending = pendingShareState.get(peerId);
+    if (pending !== undefined) {
+      tile.wrap.classList.toggle('screenshare', pending);
+      pendingShareState.delete(peerId);
+    }
     armFrameWatch(tile);
     layoutGrid();
     return tile;
@@ -295,8 +317,11 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     }
     void tile.video.play().catch(() => undefined);
     // Mirror the camera preview, but never a screen share (text would flip).
+    // The share preview also promotes the tile to stage layout.
     tile.wrap.classList.toggle('mirror', !(room?.sharing ?? false));
+    tile.wrap.classList.toggle('screenshare', room?.sharing ?? false);
     syncVideoVisibility(tile, stream);
+    layoutGrid();
   }
 
   function mergeRemoteTrack(peerId: string, track: MediaStreamTrack): MediaStream {
@@ -380,6 +405,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     tile.video.srcObject = null;
     tile.wrap.remove();
     tiles.delete(peerId);
+    pendingShareState.delete(peerId);
     remoteStreams.get(peerId)?.getTracks().forEach((t) => t.stop());
     remoteStreams.delete(peerId);
     const audio = remoteAudio.get(peerId);
@@ -599,6 +625,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     }
     remoteAudio.clear();
     remoteStreams.clear();
+    pendingShareState.clear();
     tiles.clear();
     const r = room;
     room = null;
@@ -681,6 +708,19 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         }),
         r.on('track', ({ peerId, track }) => attachRemoteTrack(peerId, track)),
         r.on('reaction', ({ emoji }) => spawnReactionFloat(emoji)),
+        r.on('media-state', ({ peerId, sharing }) => {
+          const tile = tiles.get(peerId);
+          if (!tile) {
+            // Share state raced ahead of presence (e.g. targeted resend for a
+            // late joiner landed before its tile was built) — stash it;
+            // ensureTile applies it as soon as the tile exists.
+            pendingShareState.set(peerId, sharing);
+            return;
+          }
+          if (tile.wrap.classList.contains('screenshare') === sharing) return;
+          tile.wrap.classList.toggle('screenshare', sharing);
+          layoutGrid();
+        }),
         r.on('peer-state', ({ peerId, state }) => {
           const tile = tiles.get(peerId);
           if (!tile) return;

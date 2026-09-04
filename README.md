@@ -78,6 +78,7 @@ type SignalMessage =
   | { type: 'ice'; candidate: RTCIceCandidateInit; to: string; from?: string }
   | { type: 'reaction'; emoji: string; from?: string }
   | { type: 'peers'; peers: { peerId: string; displayName?: string }[] }
+  | { type: 'media-state'; peerId: string; sharing: boolean; to?: string }
 
 interface SignalAdapter {
   send(msg: SignalMessage): void
@@ -85,7 +86,7 @@ interface SignalAdapter {
 }
 ```
 
-Relay `offer` / `answer` / `ice` to `to`. Broadcast `join` / `leave`. Optionally send `peers` snapshot on join.
+Relay `offer` / `answer` / `ice` / targeted `media-state` to `to`. Broadcast `join` / `leave` / `media-state`. Optionally send `peers` snapshot on join.
 
 Helpers: `createBroadcastSignalAdapter`, `createLocalSignalBus`.
 
@@ -104,7 +105,7 @@ Helpers: `createBroadcastSignalAdapter`, `createLocalSignalBus`.
 | `videoCodec` | — | e.g. `video/VP8` |
 | `autoJoin` | `true` | Emit `join` on start |
 
-UI: `toolbar`, `theme` (CSS vars), `labels`, `onHangup`, `onReady`, `onError`.
+UI: `toolbar`, `theme` (CSS vars), `labels`, `videoFit` (`'contain'` default — full frame at true aspect ratio; `'cover'` crops to fill; screen shares always `'contain'`), `onHangup`, `onReady`, `onError`. Screen-share tiles are promoted to a full-width stage so shared content stays readable.
 
 ## Limits
 

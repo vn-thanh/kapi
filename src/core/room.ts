@@ -213,6 +213,16 @@ export class KapiRoom {
     this.peers.set(remoteId, peer);
     this.peerMeta.set(remoteId, { peerId: remoteId, displayName });
     this.emit('peer-joined', { peerId: remoteId, displayName });
+    // Late joiners must learn about an in-progress screen share — they never
+    // saw the original broadcast (targeted so relays route it to them only).
+    if (this.screenStream) {
+      this.options.signal.send({
+        type: 'media-state',
+        peerId: this.options.peerId,
+        sharing: true,
+        to: remoteId,
+      });
+    }
     return peer;
   }
 
@@ -346,6 +356,14 @@ export class KapiRoom {
           this.emit('reaction', { peerId: msg.from ?? '', emoji });
           break;
         }
+        case 'media-state': {
+          // Cosmetic hint for remote UIs (stage layout for the sharer) —
+          // malformed ones are ignored like reactions.
+          if (typeof msg.peerId !== 'string' || typeof msg.sharing !== 'boolean') return;
+          if (msg.peerId === this.options.peerId) return;
+          this.emit('media-state', { peerId: msg.peerId, sharing: msg.sharing });
+          break;
+        }
       }
     } catch (err) {
       this.emit('error', { error: err instanceof Error ? err : new Error(String(err)) });
@@ -415,6 +433,9 @@ export class KapiRoom {
         await this.restoreCameraTrack();
         throw err;
       }
+      // Announce only after the swap actually succeeded — remote tiles should
+      // promote to stage view exactly when the screen track starts flowing.
+      this.broadcastMediaState(true);
       return;
     }
 
@@ -426,6 +447,20 @@ export class KapiRoom {
       t.stop();
     }
     await this.restoreCameraTrack();
+    this.broadcastMediaState(false);
+  }
+
+  /** Broadcast screen-share state (and fire `media-state` locally) so remote
+   *  UIs can give the sharer's tile stage placement / uncropped fit. Cosmetic:
+   *  relays that drop unknown message types only lose the layout hint. */
+  private broadcastMediaState(sharing: boolean) {
+    if (this.closed) return;
+    this.options.signal.send({
+      type: 'media-state',
+      peerId: this.options.peerId,
+      sharing,
+    });
+    this.emit('media-state', { peerId: this.options.peerId, sharing });
   }
 
   private async restoreCameraTrack() {

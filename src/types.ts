@@ -9,7 +9,14 @@ export type SignalMessage =
   | { type: 'answer'; sdp: string; to: string; from?: string }
   | { type: 'ice'; candidate: RTCIceCandidateInit; to: string; from?: string }
   | { type: 'reaction'; emoji: string; from?: string }
-  | { type: 'peers'; peers: SignalPeer[] };
+  | { type: 'peers'; peers: SignalPeer[] }
+  /**
+   * Broadcast when a peer starts/stops screen sharing (and sent targeted with
+   * `to` to peers that join mid-share). Relays that only switch over the
+   * documented types may drop it — the UI then falls back to plain grid
+   * placement, media itself is unaffected.
+   */
+  | { type: 'media-state'; peerId: string; sharing: boolean; to?: string; from?: string };
 
 export interface SignalAdapter {
   send(msg: SignalMessage): void;
@@ -76,6 +83,9 @@ export type RoomEventMap = {
   /** An emoji reaction — fired for remote arrivals AND for the local one
    *  triggered by `sendReaction` (single stream for UI consumers). */
   reaction: { peerId: string; emoji: string };
+  /** Screen-share state changed — fired locally when `shareScreen` toggles
+   *  and for remote peers via the `media-state` signal message. */
+  'media-state': { peerId: string; sharing: boolean };
   error: { error: Error };
   hangup: undefined;
 };
@@ -111,6 +121,13 @@ export interface KapiMountOptions extends KapiRoomOptions {
   toolbar?: ToolbarButton[];
   theme?: KapiUiTheme;
   labels?: KapiUiLabels;
+  /**
+   * How camera video fits inside its tile. `'contain'` (default) always shows
+   * the full frame at its true aspect ratio; `'cover'` fills the tile and
+   * crops overflow (pre-0.2 behavior). Screen shares always use `contain` —
+   * cropped screen content is unreadable.
+   */
+  videoFit?: 'contain' | 'cover';
   onHangup?: () => void;
   onReady?: (room: import('./core/room').KapiRoom) => void;
   onError?: (error: Error) => void;

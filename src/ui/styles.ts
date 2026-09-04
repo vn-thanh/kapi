@@ -44,10 +44,30 @@ export function injectStyles() {
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /* Fit the whole frame at its true aspect ratio — "cover" used to crop
+     whatever overflowed the tile (screen share edges, faces near the frame
+     border). Letterbox bars fall back to the tile background. */
+  object-fit: contain;
   background: transparent;
   opacity: 1;
   transition: opacity 0.2s ease;
+}
+/* Opt back into edge-to-edge cropping (camera tiles only). */
+.kapi-root.kapi-fit-cover .kapi-tile video {
+  object-fit: cover;
+}
+/* ---------- screen-share stage ----------
+   The sharer's tile (local preview and remote alike) is promoted to a stage:
+   it is placed first, spans the full grid width, and takes the lion's share
+   of the grid height via the row template mount() writes. */
+.kapi-tile.screenshare {
+  order: -1;
+  grid-column: 1 / -1;
+  border-color: color-mix(in srgb, var(--kapi-accent, #3b82f6) 38%, transparent);
+}
+.kapi-tile.screenshare video {
+  /* Screen content must never be cropped — even under videoFit: 'cover'. */
+  object-fit: contain;
 }
 .kapi-tile.video-off video {
   opacity: 0;

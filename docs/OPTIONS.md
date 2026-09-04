@@ -47,6 +47,10 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
     toolbarBg?: string
   }
   labels?: Record<string, string>  // see DEFAULT_LABELS
+  videoFit?: 'contain' | 'cover'  // default 'contain' — full frame, true aspect
+                                  // ratio. 'cover' fills the tile and crops
+                                  // overflow. Screen shares always use
+                                  // 'contain' so shared content stays readable.
   onHangup?: () => void
   onReady?: (room: KapiRoom) => void
   onError?: (error: Error) => void
@@ -63,5 +67,6 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
 | `peer-state` | `{ peerId, state }` | RTCPeerConnection state — drive connection badges |
 | `local-stream` | `{ stream }` | Local preview source; re-emitted on screen share, background, device switch |
 | `reaction` | `{ peerId, emoji }` | Emoji reaction — fired for remote arrivals AND for the local one sent via `room.sendReaction(emoji)`; the built-in UI floats it up the screen Jitsi-style |
+| `media-state` | `{ peerId, sharing }` | Screen share started/stopped — fired locally by `shareScreen` and for remote peers via the `media-state` signal message. The built-in UI promotes the sharer's tile to a full-width stage with uncropped (`contain`) video |
 | `error` | `{ error }` | Recoverable errors (ICE exhausted, maxPeers, …) |
 | `hangup` | — | Room closed |
