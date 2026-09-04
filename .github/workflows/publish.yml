@@ -1,0 +1,36 @@
+# Publishes the package to npm.
+#
+# Triggered by every GitHub Release (which release-please creates when its
+# Release PR is merged) and manually via workflow_dispatch for re-publishing.
+#
+# Requires the NPM_TOKEN repository secret:
+#   npmjs.com → Access Tokens → Generate New Token (type: Automation)
+#   gh secret set NPM_TOKEN -R vn-thanh/kapi
+
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
