@@ -51,7 +51,9 @@ class FakeMediaStream {
 
 class FakeTransceiver {
   constructor(kind, direction) {
+    this.kind = kind;
     this.direction = direction;
+    this.stopped = false;
     this.sender = {
       track: null,
       replaceTrack: async (t) => {
@@ -82,6 +84,22 @@ class FakePeerConnection {
     const t = new FakeTransceiver(kind, init?.direction ?? 'sendrecv');
     this._transceivers.push(t);
     return t;
+  }
+  addTrack(track) {
+    // Spec-ish addTrack: reuse a compatible transceiver (same kind, free
+    // sender) and upgrade its direction, else create a new sendrecv one.
+    let t = this._transceivers.find(
+      (x) => x.kind === track.kind && !x.sender.track && !x.stopped,
+    );
+    if (t) {
+      t.sender.track = track;
+      if (t.direction === 'recvonly' || t.direction === 'inactive') t.direction = 'sendrecv';
+    } else {
+      t = new FakeTransceiver(track.kind, 'sendrecv');
+      t.sender.track = track;
+      this._transceivers.push(t);
+    }
+    return t.sender;
   }
   getTransceivers() {
     return this._transceivers;

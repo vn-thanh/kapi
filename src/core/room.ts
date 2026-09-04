@@ -399,9 +399,6 @@ export class KapiRoom {
       track.onended = () => void this.shareScreen(false);
       try {
         await this.replaceVideoTrack(track);
-        // Some browsers need a re-offer after display-capture replace (esp. if
-        // the peer originally had no outbound video).
-        await this.renegotiateAll();
       } catch (err) {
         // Never straddle "sharing in state, camera on the wire" — roll back.
         track.onended = null;
@@ -421,7 +418,6 @@ export class KapiRoom {
       t.stop();
     }
     await this.restoreCameraTrack();
-    await this.renegotiateAll();
   }
 
   private async restoreCameraTrack() {
@@ -436,15 +432,11 @@ export class KapiRoom {
     }
   }
 
-  private async renegotiateAll() {
-    for (const id of [...this.peers.keys()]) {
-      await this.negotiate(id);
-    }
-  }
-
   private async replaceVideoTrack(track: MediaStreamTrack | null) {
-    for (const peer of this.peers.values()) {
-      await peer.replaceTrack('video', track);
+    for (const [id, peer] of this.peers) {
+      // Renegotiate when the transceiver direction/m-line changed (e.g. a
+      // peer that had no outbound video starts screen sharing).
+      if (await peer.replaceTrack('video', track)) await this.negotiate(id);
     }
     // Keep local preview on a dedicated stream so we never mutate the camera /
     // canvas stream that peers may still reference after stopping share.
@@ -512,7 +504,9 @@ export class KapiRoom {
       });
       const track = stream.getAudioTracks()[0];
       if (!track) return;
-      for (const peer of this.peers.values()) await peer.replaceTrack('audio', track);
+      for (const [id, peer] of this.peers) {
+        if (await peer.replaceTrack('audio', track)) await this.negotiate(id);
+      }
       // Swap the mic track in every stream that exposes it — raw camera plus
       // the current localStream, which may be the background-processed canvas
       // stream or the screen-share preview (both carry audio tracks of their
