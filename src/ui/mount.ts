@@ -16,6 +16,12 @@ type Tile = {
   avatar: HTMLDivElement;
   conn: HTMLSpanElement;
   micChip: HTMLSpanElement;
+  /** performance.now() when this video last presented a frame. */
+  lastFrameAt: number;
+  /** A frame was presented at least once on the current source. */
+  presentedFrame: boolean;
+  /** Pending requestVideoFrameCallback handle; null when none is armed. */
+  frameHandle: number | null;
 };
 
 function initials(name: string): string {
@@ -24,6 +30,24 @@ function initials(name: string): string {
   const a = parts[0]![0] ?? '?';
   const b = parts.length > 1 ? parts[parts.length - 1]![0] : '';
   return (a + b).toUpperCase();
+}
+
+/**
+ * A tile whose video track still *looks* live (unmuted, enabled) but has
+ * presented no frame for this long is treated as video-off. When a sender
+ * stops a screen share (camera off or missing), frames stop flowing and the
+ * receiver's <video> keeps displaying the LAST DECODED FRAME — the frozen
+ * screen image — because remote `mute` events are unreliable and tardy across
+ * browsers (Chrome mutes video late and audio never; Safari never fires
+ * unmute; w3c/webrtc-pc#3077). Frame presence itself is the reliable signal.
+ */
+const FRAME_STALL_MS = 2000;
+
+function supportsFrameCallback(): boolean {
+  return (
+    typeof HTMLVideoElement !== 'undefined' &&
+    'requestVideoFrameCallback' in HTMLVideoElement.prototype
+  );
 }
 
 export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMountHandle {
@@ -81,6 +105,21 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   let bgMode: BackgroundMode = options.effects?.background ?? 'none';
   const unsubs: Array<() => void> = [];
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // ---------- frozen-frame watchdog ----------
+
+  // Re-evaluate every tile once a second: if a video element still holds a
+  // "live-looking" track but no frame has been presented recently (screen
+  // share just stopped, camera turned off mid-call), syncVideoVisibility
+  // flips it to video-off so the stale last frame is hidden behind the
+  // avatar. document.hidden pauses presentation (no rVFC callbacks) and
+  // would cause false positives.
+  const frameWatchdog = setInterval(() => {
+    if (disposed || document.hidden) return;
+    for (const tile of tiles.values()) {
+      syncVideoVisibility(tile, tile.video.srcObject as MediaStream | null);
+    }
+  }, 1000);
 
   // ---------- toast / errors ----------
 
@@ -180,8 +219,19 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
     wrap.append(video, avatar, meta);
     grid.appendChild(wrap);
-    tile = { wrap, video, label: tag, avatar, conn, micChip };
+    tile = {
+      wrap,
+      video,
+      label: tag,
+      avatar,
+      conn,
+      micChip,
+      lastFrameAt: performance.now(),
+      presentedFrame: false,
+      frameHandle: null,
+    };
     tiles.set(peerId, tile);
+    armFrameWatch(tile);
     layoutGrid();
     return tile;
   }
@@ -191,18 +241,56 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     return fallback || peerId;
   }
 
-  /** Reflect "no live video" (muted/disabled/no track) with an avatar overlay. */
+  /** Reflect "no live video" (muted/disabled/no track, or frames stopped
+   *  arriving while the track still looks live) with an avatar overlay. */
   function syncVideoVisibility(tile: Tile, stream: MediaStream | null) {
-    const hasLiveVideo =
-      !!stream && stream.getVideoTracks().some((t) => !t.muted && t.enabled && t.readyState === 'live');
-    tile.wrap.classList.toggle('video-off', !hasLiveVideo);
+    const tracks = stream?.getVideoTracks() ?? [];
+    const enabledLive = tracks.some((t) => t.enabled && t.readyState === 'live');
+    const looksLive = enabledLive && tracks.some((t) => !t.muted && t.enabled && t.readyState === 'live');
+    const framesFlowing =
+      enabledLive && tile.presentedFrame && performance.now() - tile.lastFrameAt <= FRAME_STALL_MS;
+    // Show video when frames are actually being presented (this also rescues
+    // browsers whose muted flag sticks while media flows), or when a
+    // live-looking track has yet to present its first frame (startup decode —
+    // the historical behavior). presentedFrame is only ever set by
+    // requestVideoFrameCallback, so browsers without it keep the pure
+    // track-state logic.
+    const videoOn = framesFlowing || (looksLive && !tile.presentedFrame);
+    tile.wrap.classList.toggle('video-off', !videoOn);
+  }
+
+  /** Track real frame presentation per tile — the trustworthy replacement for
+   *  the unreliable remote track `mute`/`unmute` events (w3c/webrtc-pc#3077).
+   *  Re-armed after every srcObject swap so the callback chain cannot die
+   *  with the old source. */
+  function armFrameWatch(tile: Tile) {
+    if (!supportsFrameCallback()) return;
+    const video = tile.video;
+    if (tile.frameHandle !== null) video.cancelVideoFrameCallback(tile.frameHandle);
+    const onFrame = () => {
+      if (disposed) return;
+      tile.presentedFrame = true;
+      tile.lastFrameAt = performance.now();
+      // Frames resumed (camera back, connection recovered) — clear the
+      // video-off state at once instead of waiting for the watchdog tick.
+      if (tile.wrap.classList.contains('video-off')) {
+        syncVideoVisibility(tile, video.srcObject as MediaStream | null);
+      }
+      tile.frameHandle = video.requestVideoFrameCallback(onFrame);
+    };
+    tile.frameHandle = video.requestVideoFrameCallback(onFrame);
   }
 
   function attachLocalStream(stream: MediaStream) {
     const tile = ensureTile(selfId, selfName === labels.you ? labels.you : `${selfName} (${labels.you})`);
     const chip = tile.avatar.querySelector('.kapi-avatar-initials');
     if (chip) chip.textContent = initials(selfName);
-    if (tile.video.srcObject !== stream) tile.video.srcObject = stream;
+    if (tile.video.srcObject !== stream) {
+      tile.video.srcObject = stream;
+      // New source: old frames no longer count as "flowing".
+      tile.presentedFrame = false;
+      armFrameWatch(tile);
+    }
     void tile.video.play().catch(() => undefined);
     // Mirror the camera preview, but never a screen share (text would flip).
     tile.wrap.classList.toggle('mirror', !(room?.sharing ?? false));
@@ -223,7 +311,12 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     const stream = mergeRemoteTrack(peerId, track);
     const meta = room?.participants.find((p) => p.peerId === peerId);
     const tile = ensureTile(peerId, meta?.displayName ?? peerId);
-    if (tile.video.srcObject !== stream) tile.video.srcObject = stream;
+    if (tile.video.srcObject !== stream) {
+      tile.video.srcObject = stream;
+      // New source: old frames no longer count as "flowing".
+      tile.presentedFrame = false;
+      armFrameWatch(tile);
+    }
 
     const refresh = () => {
       if (disposed) return;
@@ -281,6 +374,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   function removeTile(peerId: string) {
     const tile = tiles.get(peerId);
     if (!tile) return;
+    if (tile.frameHandle !== null) tile.video.cancelVideoFrameCallback(tile.frameHandle);
     tile.video.srcObject = null;
     tile.wrap.remove();
     tiles.delete(peerId);
@@ -431,6 +525,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     if (disposed) return;
     disposed = true;
     clearTimeout(toastTimer);
+    clearInterval(frameWatchdog);
+    for (const tile of tiles.values()) {
+      if (tile.frameHandle !== null) tile.video.cancelVideoFrameCallback(tile.frameHandle);
+    }
     unsubs.forEach((u) => u());
     unsubs.length = 0;
     for (const audio of remoteAudio.values()) {
