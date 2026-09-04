@@ -6,6 +6,7 @@ import type {
   KapiMountOptions,
   ToolbarButton,
 } from '../types';
+import { toolbarIconHtml } from './icons';
 import { injectStyles } from './styles';
 
 export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMountHandle {
@@ -94,13 +95,26 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     pane.appendChild(ul);
   }
 
+  function paintButton(b: HTMLButtonElement, id: ToolbarButton, text: string, muted = false) {
+    b.title = text;
+    b.setAttribute('aria-label', text);
+    b.innerHTML = toolbarIconHtml(id, muted);
+    b.classList.toggle('is-off', muted);
+  }
+
   function updateToolbarLabels() {
     if (!room) return;
-    for (const b of bar.querySelectorAll('button')) {
+    for (const el of bar.querySelectorAll('button')) {
+      const b = el as HTMLButtonElement;
       const id = b.getAttribute('data-id') as ToolbarButton | null;
-      if (id === 'mic') b.textContent = room.micOn ? labels.micOn : labels.micOff;
-      if (id === 'cam') b.textContent = room.camOn ? labels.camOn : labels.camOff;
-      if (id === 'share') b.textContent = room.sharing ? labels.stopShare : labels.share;
+      if (!id) continue;
+      if (id === 'mic') {
+        paintButton(b, id, room.micOn ? labels.micOn : labels.micOff, !room.micOn);
+      } else if (id === 'cam') {
+        paintButton(b, id, room.camOn ? labels.camOn : labels.camOff, !room.camOn);
+      } else if (id === 'share') {
+        paintButton(b, id, room.sharing ? labels.stopShare : labels.share, room.sharing);
+      }
     }
   }
 
@@ -135,8 +149,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     const b = document.createElement('button');
     b.type = 'button';
     b.dataset.id = id;
-    b.title = text;
-    b.textContent = text;
+    paintButton(b, id, text, false);
     b.addEventListener('click', onClick);
     return b;
   }

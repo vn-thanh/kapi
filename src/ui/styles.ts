@@ -57,19 +57,32 @@ export function injectStyles() {
   background: var(--kapi-toolbar, rgba(0,0,0,0.72));
 }
 .kapi-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
   border: 0;
-  border-radius: 6px;
-  padding: 8px 12px;
+  border-radius: 999px;
+  padding: 0;
   cursor: pointer;
   background: #2a2a2a;
   color: inherit;
-  font-size: 13px;
+  line-height: 0;
+}
+.kapi-toolbar button svg {
+  display: block;
+  flex-shrink: 0;
+}
+.kapi-toolbar button.is-off {
+  background: #444;
+  opacity: 0.85;
 }
 .kapi-toolbar button[data-id="hangup"] {
   background: var(--kapi-danger, #ef4444);
 }
 .kapi-toolbar button:hover {
-  filter: brightness(1.1);
+  filter: brightness(1.15);
 }
 .kapi-participants,
 .kapi-settings {

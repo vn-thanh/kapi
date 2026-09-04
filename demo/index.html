@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>kapi demo</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0f14;
+        --panel: #121820;
+        --fg: #e8eef6;
+        --muted: #8b9bb0;
+        --accent: #3b82f6;
+        --danger: #ef4444;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        background: radial-gradient(1200px 600px at 20% -10%, #1a2740 0%, var(--bg) 55%);
+        color: var(--fg);
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      #lobby {
+        max-width: 420px;
+        margin: auto;
+        padding: 28px;
+        background: color-mix(in srgb, var(--panel) 92%, transparent);
+        border: 1px solid #243044;
+        border-radius: 16px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+      }
+      #lobby h1 {
+        margin: 0 0 6px;
+        font-size: 1.6rem;
+        letter-spacing: -0.02em;
+      }
+      #lobby p {
+        margin: 0 0 20px;
+        color: var(--muted);
+        font-size: 0.95rem;
+        line-height: 1.45;
+      }
+      label {
+        display: block;
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      input {
+        width: 100%;
+        margin-bottom: 14px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid #2c3b52;
+        background: #0e141d;
+        color: var(--fg);
+        font-size: 1rem;
+      }
+      input:focus {
+        outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+        border-color: var(--accent);
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+      }
+      button.primary {
+        flex: 1;
+        border: 0;
+        border-radius: 10px;
+        padding: 12px 16px;
+        background: var(--accent);
+        color: white;
+        font-weight: 600;
+        font-size: 0.95rem;
+        cursor: pointer;
+      }
+      button.primary:hover {
+        filter: brightness(1.08);
+      }
+      .hint {
+        margin-top: 16px;
+        font-size: 0.8rem;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      #meet {
+        flex: 1;
+        min-height: 0;
+        display: none;
+      }
+      body.in-call #lobby {
+        display: none;
+      }
+      body.in-call #meet {
+        display: block;
+      }
+      #banner {
+        display: none;
+        position: fixed;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 20;
+        max-width: min(520px, 92vw);
+        padding: 10px 14px;
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.75);
+        border: 1px solid #334;
+        font-size: 0.85rem;
+        color: #fde68a;
+      }
+      #banner.show {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="banner"></div>
+    <div id="lobby">
+      <h1>kapi</h1>
+      <p>
+        Local P2P mesh demo — no media server. Open a second browser tab with the same room id to
+        call yourself.
+      </p>
+      <label for="room">Room id</label>
+      <input id="room" value="kapi-demo" autocomplete="off" />
+      <label for="name">Display name</label>
+      <input id="name" autocomplete="nickname" />
+      <div class="row">
+        <button class="primary" id="join" type="button">Join call</button>
+      </div>
+      <p class="hint">
+        Uses <code>BroadcastChannel</code> signaling (same browser / same origin only). Camera or
+        mic missing is OK — you can still join.
+      </p>
+    </div>
+    <div id="meet"></div>
+
+    <script type="module">
+      import { createBroadcastSignalAdapter } from '/dist/index.js';
+      import { mount } from '/dist/ui/index.js';
+
+      const params = new URLSearchParams(location.search);
+      const roomInput = document.getElementById('room');
+      const nameInput = document.getElementById('name');
+      const banner = document.getElementById('banner');
+      const meet = document.getElementById('meet');
+
+      roomInput.value = params.get('room') || roomInput.value;
+      nameInput.value = params.get('name') || `User-${crypto.randomUUID().slice(0, 4)}`;
+
+      let handle = null;
+
+      function showBanner(text) {
+        banner.textContent = text;
+        banner.classList.add('show');
+      }
+
+      function startCall() {
+        const roomId = (roomInput.value || 'kapi-demo').trim();
+        const displayName = (nameInput.value || 'Guest').trim();
+        const peerId = crypto.randomUUID();
+
+        const url = new URL(location.href);
+        url.searchParams.set('room', roomId);
+        url.searchParams.set('name', displayName);
+        history.replaceState(null, '', url);
+
+        document.body.classList.add('in-call');
+        meet.replaceChildren();
+
+        const signal = createBroadcastSignalAdapter(`kapi:${roomId}`, peerId);
+        handle = mount(meet, {
+          roomId,
+          peerId,
+          displayName,
+          signal,
+          onHangup: () => {
+            handle?.dispose();
+            handle = null;
+            document.body.classList.remove('in-call');
+            banner.classList.remove('show');
+          },
+          onError: (e) => {
+            console.error(e);
+            showBanner(e?.message || String(e));
+          },
+        });
+      }
+
+      document.getElementById('join').addEventListener('click', startCall);
+
+      if (params.get('autostart') === '1') startCall();
+    </script>
+  </body>
+</html>

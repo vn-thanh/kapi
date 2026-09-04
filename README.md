@@ -2,6 +2,17 @@
 
 Browser **WebRTC P2P mesh** calls — no media SFU/MCU. You supply signaling (Socket.IO, BroadcastChannel, …). Optional client-side background blur/remove via MediaPipe.
 
+## Try the demo
+
+```bash
+git clone https://github.com/vn-thanh/kapi.git
+cd kapi
+npm install
+npm run demo
+```
+
+Open [http://localhost:5179](http://localhost:5179), join a room, then open a second tab with the same room id. Details: [demo/README.md](demo/README.md).
+
 ## Install
 
 ```bash
@@ -106,6 +117,8 @@ UI: `toolbar`, `theme` (CSS vars), `labels`, `onHangup`, `onReady`, `onError`.
 npm run typecheck
 npm run build
 npm run check
+npm run demo        # build + local demo server
+npm run demo:serve  # serve only (dist must exist)
 ```
 
 ## Publish (later)
