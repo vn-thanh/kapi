@@ -108,9 +108,12 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   parent.appendChild(root);
 
   const tiles = new Map<string, Tile>();
-  /** Screen-share state that arrived before the peer's tile existed (share
-   *  broadcast raced ahead of presence) — applied in ensureTile. */
-  const pendingShareState = new Map<string, boolean>();
+  /** Mic / share state that arrived before the peer's tile existed (broadcast
+   *  raced ahead of presence) — applied in ensureTile. */
+  const pendingMediaState = new Map<string, { sharing?: boolean; mic?: boolean }>();
+  /** Signaled mic-on per peer. Prefer this over remote `track.muted`, which
+   *  Chrome never fires for audio (w3c/webrtc-pc#3077). */
+  const peerMicOn = new Map<string, boolean>();
   /** One managed stream per remote peer — never trust `ontrack` stream
    *  identity: with replaceTrack/renegotiation browsers may report audio and
    *  video on *different* MediaStream objects (or none at all), which used to
@@ -359,6 +362,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     tag.textContent = label;
     const micChip = document.createElement('span');
     micChip.className = 'kapi-mic-state hidden';
+    micChip.setAttribute('aria-hidden', 'true');
     micChip.innerHTML = statusIconHtml('micOff');
     meta.append(conn, tag, micChip);
 
@@ -376,10 +380,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       frameHandle: null,
     };
     tiles.set(peerId, tile);
-    const pending = pendingShareState.get(peerId);
-    if (pending !== undefined) {
-      tile.wrap.classList.toggle('screenshare', pending);
-      pendingShareState.delete(peerId);
+    const pending = pendingMediaState.get(peerId);
+    if (pending) {
+      pendingMediaState.delete(peerId);
+      applyMediaState(peerId, pending);
     }
     armFrameWatch(tile);
     applyLayout();
@@ -448,6 +452,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     tile.wrap.classList.toggle('mirror', !(room?.sharing ?? false));
     tile.wrap.classList.toggle('screenshare', room?.sharing ?? false);
     syncVideoVisibility(tile, stream);
+    if (room) {
+      peerMicOn.set(selfId, room.micOn);
+      updateMicChip(tile, stream, selfId);
+    }
     applyLayout();
   }
 
@@ -478,7 +486,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       syncVideoVisibility(tile, stream);
       void tile.video.play().catch(() => undefined);
       if (stream.getAudioTracks().length) bindRemoteAudio(peerId, stream);
-      updateMicChip(tile, stream);
+      updateMicChip(tile, stream, peerId);
     };
     // Sender-side track.enabled=false stops RTP → remote onmute fires;
     // onunmute marks recovery / replaceTrack content swaps (screen share).
@@ -488,10 +496,46 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     refresh();
   }
 
-  function updateMicChip(tile: Tile, stream: MediaStream) {
-    const aud = stream.getAudioTracks()[0];
-    const micOff = !!aud && (aud.muted || !aud.enabled) && aud.readyState === 'live';
+  function updateMicChip(tile: Tile, stream: MediaStream | null, peerId?: string) {
+    const id = peerId ?? tile.wrap.dataset.peerId;
+    const signaled = id ? peerMicOn.get(id) : undefined;
+    let micOff: boolean;
+    if (signaled !== undefined) {
+      micOff = !signaled;
+    } else {
+      // Older peers that don't broadcast `mic` — last-resort guess. Remote
+      // `track.muted` is unreliable (Chrome never fires it for audio).
+      const aud = stream?.getAudioTracks()[0];
+      micOff = !!aud && (aud.muted || !aud.enabled) && aud.readyState === 'live';
+    }
     tile.micChip.classList.toggle('hidden', !micOff);
+    tile.micChip.setAttribute('aria-hidden', micOff ? 'false' : 'true');
+    if (micOff) tile.micChip.setAttribute('aria-label', 'Muted');
+    else tile.micChip.removeAttribute('aria-label');
+  }
+
+  /** Apply a `media-state` snapshot (live or stashed until the tile exists). */
+  function applyMediaState(peerId: string, state: { sharing?: boolean; mic?: boolean }) {
+    if (state.mic !== undefined) peerMicOn.set(peerId, state.mic);
+    const tile = tiles.get(peerId);
+    if (!tile) {
+      const prev = pendingMediaState.get(peerId) ?? {};
+      pendingMediaState.set(peerId, { ...prev, ...state });
+      return;
+    }
+    if (state.sharing !== undefined) {
+      const next = state.sharing;
+      if (tile.wrap.classList.contains('screenshare') !== next) {
+        tile.wrap.classList.toggle('screenshare', next);
+        applyLayout();
+      }
+    }
+    const stream =
+      peerId === selfId
+        ? (room?.localMedia ?? (tile.video.srcObject as MediaStream | null))
+        : (remoteStreams.get(peerId) ?? (tile.video.srcObject as MediaStream | null));
+    updateMicChip(tile, stream, peerId);
+    if (!pane.classList.contains('hidden')) renderParticipants();
   }
 
   function bindRemoteAudio(peerId: string, stream: MediaStream) {
@@ -533,7 +577,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     tile.video.srcObject = null;
     tile.wrap.remove();
     tiles.delete(peerId);
-    pendingShareState.delete(peerId);
+    pendingMediaState.delete(peerId);
+    peerMicOn.delete(peerId);
     speakers.forget(peerId);
     if (pinnedPeer === peerId) pinnedPeer = null;
     remoteStreams.get(peerId)?.getTracks().forEach((t) => t.stop());
@@ -646,6 +691,15 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
           ? `${p.displayName ?? p.peerId} (${labels.you})`
           : (p.displayName ?? p.peerId);
       li.append(dot, name);
+      const muted =
+        p.peerId === selfId ? !(room.micOn) : peerMicOn.get(p.peerId) === false;
+      if (muted) {
+        const mute = document.createElement('span');
+        mute.className = 'kapi-roster-mute';
+        mute.innerHTML = statusIconHtml('micOff');
+        mute.setAttribute('aria-label', 'Muted');
+        li.append(mute);
+      }
       ul.appendChild(li);
     }
     pane.appendChild(ul);
@@ -691,7 +745,11 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       }
     }
     const selfTile = tiles.get(selfId);
-    if (selfTile && room.localMedia) syncVideoVisibility(selfTile, room.localMedia);
+    if (selfTile) {
+      if (room.localMedia) syncVideoVisibility(selfTile, room.localMedia);
+      peerMicOn.set(selfId, room.micOn);
+      updateMicChip(selfTile, room.localMedia, selfId);
+    }
   }
 
   async function showSettings() {
@@ -787,7 +845,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     }
     remoteAudio.clear();
     remoteStreams.clear();
-    pendingShareState.clear();
+    pendingMediaState.clear();
+    peerMicOn.clear();
     tiles.clear();
     const r = room;
     room = null;
@@ -889,18 +948,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         }),
         r.on('track', ({ peerId, track }) => attachRemoteTrack(peerId, track)),
         r.on('reaction', ({ emoji }) => spawnReactionFloat(emoji)),
-        r.on('media-state', ({ peerId, sharing }) => {
-          const tile = tiles.get(peerId);
-          if (!tile) {
-            // Share state raced ahead of presence (e.g. targeted resend for a
-            // late joiner landed before its tile was built) — stash it;
-            // ensureTile applies it as soon as the tile exists.
-            pendingShareState.set(peerId, sharing);
-            return;
-          }
-          if (tile.wrap.classList.contains('screenshare') === sharing) return;
-          tile.wrap.classList.toggle('screenshare', sharing);
-          applyLayout();
+        r.on('media-state', ({ peerId, sharing, mic }) => {
+          applyMediaState(peerId, { sharing, mic });
         }),
         r.on('peer-state', ({ peerId, state }) => {
           const tile = tiles.get(peerId);

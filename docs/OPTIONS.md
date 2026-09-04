@@ -85,6 +85,6 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
 | `peer-state` | `{ peerId, state }` | RTCPeerConnection state — drive connection badges |
 | `local-stream` | `{ stream }` | Local preview source; re-emitted on screen share, background, device switch |
 | `reaction` | `{ peerId, emoji }` | Emoji reaction — fired for remote arrivals AND for the local one sent via `room.sendReaction(emoji)`; the built-in UI floats it up the screen Jitsi-style |
-| `media-state` | `{ peerId, sharing }` | Screen share started/stopped — fired locally by `shareScreen` and for remote peers via the `media-state` signal message. The built-in UI promotes the sharer's tile to a full-width stage with uncropped (`contain`) video |
+| `media-state` | `{ peerId, sharing, mic?, cam? }` | Mic / camera / screen-share toggled — fired locally by `setMic` / `setCam` / `shareScreen` and for remote peers via the `media-state` signal message. `mic` / `cam` may be omitted by older senders (`true` = on). The built-in UI shows a mute chip on the tile (and in the participant list) and promotes the sharer's tile to a full-width stage with uncropped (`contain`) video |
 | `error` | `{ error }` | Recoverable errors (ICE exhausted, maxPeers, …) |
 | `hangup` | — | Room closed |

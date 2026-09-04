@@ -11,12 +11,21 @@ export type SignalMessage =
   | { type: 'reaction'; emoji: string; from?: string }
   | { type: 'peers'; peers: SignalPeer[] }
   /**
-   * Broadcast when a peer starts/stops screen sharing (and sent targeted with
-   * `to` to peers that join mid-share). Relays that only switch over the
-   * documented types may drop it — the UI then falls back to plain grid
-   * placement, media itself is unaffected.
+   * Broadcast when a peer's mic / camera / screen-share toggles (and sent
+   * targeted with `to` to late joiners). Relays that only switch over the
+   * documented types may drop it — media itself is unaffected; remote UIs
+   * just lose mute chips and share-stage placement. `sharing` stays required
+   * so older receivers keep parsing; `mic` / `cam` are optional (`true` = on).
    */
-  | { type: 'media-state'; peerId: string; sharing: boolean; to?: string; from?: string };
+  | {
+      type: 'media-state';
+      peerId: string;
+      sharing: boolean;
+      mic?: boolean;
+      cam?: boolean;
+      to?: string;
+      from?: string;
+    };
 
 export interface SignalAdapter {
   send(msg: SignalMessage): void;
@@ -89,9 +98,11 @@ export type RoomEventMap = {
   /** An emoji reaction — fired for remote arrivals AND for the local one
    *  triggered by `sendReaction` (single stream for UI consumers). */
   reaction: { peerId: string; emoji: string };
-  /** Screen-share state changed — fired locally when `shareScreen` toggles
-   *  and for remote peers via the `media-state` signal message. */
-  'media-state': { peerId: string; sharing: boolean };
+  /** Mic / camera / screen-share state changed — fired locally by
+   *  `setMic` / `setCam` / `shareScreen` and for remote peers via the
+   *  `media-state` signal message. `mic` / `cam` may be omitted by older
+   *  senders (`true` = on). */
+  'media-state': { peerId: string; sharing: boolean; mic?: boolean; cam?: boolean };
   error: { error: Error };
   hangup: undefined;
 };

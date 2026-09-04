@@ -13,7 +13,7 @@ type SignalMessage =
   | { type: 'offer' | 'answer'; sdp: string; to: string; from?: string }
   | { type: 'ice'; candidate: RTCIceCandidateInit; to: string; from?: string }
   | { type: 'peers'; peers: { peerId: string; displayName?: string }[] }
-  | { type: 'media-state'; peerId: string; sharing: boolean; to?: string }
+  | { type: 'media-state'; peerId: string; sharing: boolean; mic?: boolean; cam?: boolean; to?: string }
 
 interface SignalAdapter {
   send(msg: SignalMessage): void
@@ -34,10 +34,12 @@ interface SignalAdapter {
    but unload is best-effort — the server-side fallback keeps rosters free of
    ghosts when it is lost.
 
-`media-state` is a cosmetic hint (screen share started/stopped) that lets remote
-UIs give the sharer's tile stage placement. Relays that drop unknown message
-types don't break media — only the layout hint is lost — but forwarding it
-(broadcast, or targeted when `to` is set) keeps the UI correct.
+`media-state` is a cosmetic hint (mic/camera toggles and screen share
+started/stopped) that lets remote UIs show mute chips and give the sharer's
+tile stage placement. Relays that drop unknown message types don't break media
+— only the indicators are lost — but forwarding it (broadcast, or targeted
+when `to` is set) keeps the UI correct. `mic` / `cam` are optional (`true` =
+on) so older senders that only set `sharing` still parse.
 
 > HTTP adapters: make `send` unload-safe — `fetch(url, { keepalive: true })` or
 > `navigator.sendBeacon`. A plain `fetch`/`XMLHttpRequest` queued during

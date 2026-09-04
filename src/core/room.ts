@@ -213,16 +213,9 @@ export class KapiRoom {
     this.peers.set(remoteId, peer);
     this.peerMeta.set(remoteId, { peerId: remoteId, displayName });
     this.emit('peer-joined', { peerId: remoteId, displayName });
-    // Late joiners must learn about an in-progress screen share — they never
-    // saw the original broadcast (targeted so relays route it to them only).
-    if (this.screenStream) {
-      this.options.signal.send({
-        type: 'media-state',
-        peerId: this.options.peerId,
-        sharing: true,
-        to: remoteId,
-      });
-    }
+    // Late joiners never saw earlier broadcasts — send the current mic/cam/
+    // share snapshot targeted so relays route it to them only.
+    this.broadcastMediaState(remoteId);
     return peer;
   }
 
@@ -357,11 +350,18 @@ export class KapiRoom {
           break;
         }
         case 'media-state': {
-          // Cosmetic hint for remote UIs (stage layout for the sharer) —
-          // malformed ones are ignored like reactions.
+          // Cosmetic hint for remote UIs (mute chip, camera-off, share stage)
+          // — malformed ones are ignored like reactions.
           if (typeof msg.peerId !== 'string' || typeof msg.sharing !== 'boolean') return;
           if (msg.peerId === this.options.peerId) return;
-          this.emit('media-state', { peerId: msg.peerId, sharing: msg.sharing });
+          const mic = typeof msg.mic === 'boolean' ? msg.mic : undefined;
+          const cam = typeof msg.cam === 'boolean' ? msg.cam : undefined;
+          this.emit('media-state', {
+            peerId: msg.peerId,
+            sharing: msg.sharing,
+            ...(mic !== undefined ? { mic } : {}),
+            ...(cam !== undefined ? { cam } : {}),
+          });
           break;
         }
       }
@@ -374,11 +374,13 @@ export class KapiRoom {
     this.micEnabled = enabled;
     for (const t of this.localStream?.getAudioTracks() ?? []) t.enabled = enabled;
     for (const t of this.rawCameraStream?.getAudioTracks() ?? []) t.enabled = enabled;
+    this.broadcastMediaState();
   }
 
   setCam(enabled: boolean) {
     this.camEnabled = enabled;
     this.applyCamState();
+    this.broadcastMediaState();
   }
 
   /**
@@ -435,7 +437,7 @@ export class KapiRoom {
       }
       // Announce only after the swap actually succeeded — remote tiles should
       // promote to stage view exactly when the screen track starts flowing.
-      this.broadcastMediaState(true);
+      this.broadcastMediaState();
       return;
     }
 
@@ -447,20 +449,29 @@ export class KapiRoom {
       t.stop();
     }
     await this.restoreCameraTrack();
-    this.broadcastMediaState(false);
+    this.broadcastMediaState();
   }
 
-  /** Broadcast screen-share state (and fire `media-state` locally) so remote
-   *  UIs can give the sharer's tile stage placement / uncropped fit. Cosmetic:
-   *  relays that drop unknown message types only lose the layout hint. */
-  private broadcastMediaState(sharing: boolean) {
+  /** Broadcast mic/cam/share state (and fire `media-state` locally) so remote
+   *  UIs can show mute chips and give the sharer's tile stage placement.
+   *  Cosmetic: relays that drop unknown message types only lose the indicator.
+   *  Pass `to` to target a late joiner without echoing locally. */
+  private broadcastMediaState(to?: string) {
     if (this.closed) return;
+    const sharing = !!this.screenStream;
+    const mic = this.micEnabled;
+    const cam = this.camEnabled;
     this.options.signal.send({
       type: 'media-state',
       peerId: this.options.peerId,
       sharing,
+      mic,
+      cam,
+      ...(to ? { to } : {}),
     });
-    this.emit('media-state', { peerId: this.options.peerId, sharing });
+    if (!to) {
+      this.emit('media-state', { peerId: this.options.peerId, sharing, mic, cam });
+    }
   }
 
   private async restoreCameraTrack() {

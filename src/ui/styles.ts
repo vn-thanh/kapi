@@ -388,6 +388,12 @@ export function injectStyles() {
   border-radius: 999px;
   background: #22c55e;
 }
+.kapi-roster-mute {
+  margin-left: auto;
+  display: inline-flex;
+  color: var(--kapi-danger, #ef4444);
+  line-height: 0;
+}
 .kapi-device {
   display: block;
   margin-bottom: 10px;

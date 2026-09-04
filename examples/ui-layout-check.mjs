@@ -188,7 +188,34 @@ async function main() {
     const other = await state(1);
     assert.deepEqual(other.modes, [], 'second mount unaffected');
 
-    console.log('ok: ui layouts, cycling, pinning, setLayout');
+    // 5. remote mute chip: p1 mutes → both UIs show the chip on p1's tile.
+    //    (Cannot infer this from remote track.muted — Chrome never fires it.)
+    await pageObj.evaluate(() => {
+      document
+        .querySelectorAll('.kapi-root')[0]
+        .querySelector('button[data-id="mic"]')
+        .click();
+    });
+    await pageObj.waitForFunction(
+      () => {
+        const chip = (root, peerId) =>
+          document
+            .querySelectorAll('.kapi-root')
+            [root].querySelector(`.kapi-tile[data-peer-id="${peerId}"] .kapi-mic-state`);
+        const local = chip(0, 'p1');
+        const remote = chip(1, 'p1');
+        return (
+          local &&
+          !local.classList.contains('hidden') &&
+          remote &&
+          !remote.classList.contains('hidden')
+        );
+      },
+      undefined,
+      { timeout: 8000 },
+    );
+
+    console.log('ok: ui layouts, cycling, pinning, setLayout, remote mute');
   } finally {
     await browser?.close().catch(() => undefined);
     server.kill();

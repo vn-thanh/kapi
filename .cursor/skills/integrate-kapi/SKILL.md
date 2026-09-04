@@ -94,7 +94,7 @@ Default STUN is often not enough. Pass host-configured `iceServers` (STUN + TURN
 
 Two browsers, same `roomId`:
 
-- A/V duplex, mute, camera, screen share, background, hangup
+- A/V duplex, mute (others see the mute chip), camera, screen share, background, hangup
 - Peer leave cleans up for others
 - Strict NAT: works only with TURN
 

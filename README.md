@@ -150,8 +150,8 @@ await room.hangup()
 
 | Method | What it does |
 |---|---|
-| `setMic(on)` | Mute / unmute the audio track |
-| `setCam(on)` | Start / stop the camera track |
+| `setMic(on)` | Mute / unmute the audio track (broadcasts `media-state`) |
+| `setCam(on)` | Start / stop the camera track (broadcasts `media-state`) |
 | `shareScreen(on)` | Start / stop screen sharing (broadcasts `media-state`) |
 | `setBackground(mode)` | `'none'` \| `'blur'` \| `'remove'` \| `{ image: url }` — swaps the processed track live |
 | `switchDevice(kind, deviceId)` | Switch mic (`audioinput`) or camera (`videoinput`) mid-call |
@@ -168,7 +168,7 @@ await room.hangup()
 | `peer-state` | `{ peerId, state }` | Connection status badges |
 | `local-stream` | `{ stream }` | Local preview (re-emitted on share / background / device switch) |
 | `reaction` | `{ peerId, emoji }` | Floating emoji (fires for yours too) |
-| `media-state` | `{ peerId, sharing }` | Screen-share stage / indicator |
+| `media-state` | `{ peerId, sharing, mic?, cam? }` | Mute chip, camera-off, screen-share stage |
 | `error` | `{ error }` | Recoverable errors (ICE exhausted, room full…) |
 | `hangup` | — | Room closed |
 
@@ -240,7 +240,7 @@ type SignalMessage =
   | { type: 'ice'; candidate: RTCIceCandidateInit; to: string; from?: string }
   | { type: 'reaction'; emoji: string; from?: string }
   | { type: 'peers'; peers: { peerId: string; displayName?: string }[] }
-  | { type: 'media-state'; peerId: string; sharing: boolean; to?: string }
+  | { type: 'media-state'; peerId: string; sharing: boolean; mic?: boolean; cam?: boolean; to?: string }
 ```
 
 A drop-in Socket.IO adapter, client side:
