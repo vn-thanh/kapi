@@ -87,6 +87,10 @@
       button.primary:hover {
         filter: brightness(1.08);
       }
+      button.primary:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
       .hint {
         margin-top: 16px;
         font-size: 0.8rem;
@@ -129,8 +133,8 @@
     <div id="lobby">
       <h1>kapi</h1>
       <p>
-        Local P2P mesh demo — no media server. Open a second browser tab with the same room id to
-        call yourself.
+        P2P mesh demo — no media server. Share this page (e.g. via ngrok) and join the same room
+        id from another browser or device.
       </p>
       <label for="room">Room id</label>
       <input id="room" value="kapi-demo" autocomplete="off" />
@@ -140,8 +144,9 @@
         <button class="primary" id="join" type="button">Join call</button>
       </div>
       <p class="hint">
-        Uses <code>BroadcastChannel</code> signaling (same browser / same origin only). Camera or
-        mic missing is OK — you can still join.
+        Signaling is HTTP long-poll through this demo server (works across machines / ngrok).
+        Camera or mic missing is OK — you can still join. Demo includes a public TURN relay
+        so media works across different networks.
       </p>
     </div>
     <div id="meet"></div>
@@ -155,12 +160,12 @@
       }
     </script>
     <script type="module">
-      import { createBroadcastSignalAdapter } from '/dist/index.js';
       import { mount } from '/dist/ui/index.js';
 
       const params = new URLSearchParams(location.search);
       const roomInput = document.getElementById('room');
       const nameInput = document.getElementById('name');
+      const joinBtn = document.getElementById('join');
       const banner = document.getElementById('banner');
       const meet = document.getElementById('meet');
 
@@ -174,41 +179,145 @@
         banner.classList.add('show');
       }
 
-      function startCall() {
+      /**
+       * Demo SignalAdapter: POST to send, long-poll GET to receive.
+       * Uses ngrok-skip-browser-warning so free-tier interstitial does not break signaling
+       * (EventSource cannot set that header — that caused Join timeouts on ngrok).
+       */
+      function createHttpSignalAdapter(roomId, peerId) {
+        const handlers = new Set();
+        const early = [];
+        let closed = false;
+        const signalHeaders = {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        };
+
+        function dispatch(msg) {
+          if (handlers.size === 0) {
+            early.push(msg);
+            return;
+          }
+          handlers.forEach((fn) => fn(msg));
+        }
+
+        async function post(message) {
+          const res = await fetch('/kapi-signal', {
+            method: 'POST',
+            headers: signalHeaders,
+            body: JSON.stringify({ roomId, peerId, message }),
+            keepalive: true,
+          });
+          if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            throw new Error(text || `Signal POST ${res.status}`);
+          }
+        }
+
+        async function pollLoop() {
+          const qs = new URLSearchParams({ roomId, peerId });
+          while (!closed) {
+            try {
+              const res = await fetch(`/kapi-signal?${qs}`, {
+                headers: { 'ngrok-skip-browser-warning': 'true' },
+              });
+              if (!res.ok) throw new Error(`Signal poll ${res.status}`);
+              const data = await res.json();
+              for (const msg of data.messages || []) dispatch(msg);
+            } catch (err) {
+              if (closed) return;
+              console.error('[kapi demo] poll error', err);
+              await new Promise((r) => setTimeout(r, 1000));
+            }
+          }
+        }
+
+        const ready = post({ type: 'hello' }).then(() => {
+          void pollLoop();
+        });
+
+        return {
+          ready,
+          send(message) {
+            void post(message).catch((err) =>
+              console.error('[kapi demo] signal send failed', err),
+            );
+          },
+          onMessage(fn) {
+            handlers.add(fn);
+            if (early.length) {
+              const pending = early.splice(0);
+              for (const msg of pending) fn(msg);
+            }
+            return () => handlers.delete(fn);
+          },
+          close() {
+            closed = true;
+          },
+        };
+      }
+
+      async function startCall() {
         const roomId = (roomInput.value || 'kapi-demo').trim();
         const displayName = (nameInput.value || 'Guest').trim();
         const peerId = crypto.randomUUID();
 
-        const url = new URL(location.href);
-        url.searchParams.set('room', roomId);
-        url.searchParams.set('name', displayName);
-        history.replaceState(null, '', url);
+        joinBtn.disabled = true;
+        try {
+          const url = new URL(location.href);
+          url.searchParams.set('room', roomId);
+          url.searchParams.set('name', displayName);
+          history.replaceState(null, '', url);
 
-        document.body.classList.add('in-call');
-        meet.replaceChildren();
+          const signal = createHttpSignalAdapter(roomId, peerId);
+          await signal.ready;
 
-        const signal = createBroadcastSignalAdapter(`kapi:${roomId}`, peerId);
-        handle = mount(meet, {
-          roomId,
-          peerId,
-          displayName,
-          signal,
-          onHangup: () => {
-            handle?.dispose();
-            handle = null;
-            document.body.classList.remove('in-call');
-            banner.classList.remove('show');
-          },
-          onError: (e) => {
-            console.error(e);
-            showBanner(e?.message || String(e));
-          },
-        });
+          document.body.classList.add('in-call');
+          meet.replaceChildren();
+
+          handle = mount(meet, {
+            roomId,
+            peerId,
+            displayName,
+            signal,
+            // STUN alone often fails across different NATs (e.g. share via ngrok).
+            // Open Relay is a public demo TURN — use your own TURN in production.
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' },
+              {
+                urls: [
+                  'turn:openrelay.metered.ca:80',
+                  'turn:openrelay.metered.ca:443',
+                  'turn:openrelay.metered.ca:443?transport=tcp',
+                ],
+                username: 'openrelayproject',
+                credential: 'openrelayproject',
+              },
+            ],
+            onHangup: () => {
+              handle?.dispose();
+              handle = null;
+              signal.close();
+              document.body.classList.remove('in-call');
+              banner.classList.remove('show');
+            },
+            onError: (e) => {
+              console.error(e);
+              showBanner(e?.message || String(e));
+            },
+          });
+        } catch (e) {
+          console.error(e);
+          showBanner(e?.message || String(e));
+        } finally {
+          joinBtn.disabled = false;
+        }
       }
 
-      document.getElementById('join').addEventListener('click', startCall);
+      joinBtn.addEventListener('click', () => void startCall());
 
-      if (params.get('autostart') === '1') startCall();
+      if (params.get('autostart') === '1') void startCall();
     </script>
   </body>
 </html>

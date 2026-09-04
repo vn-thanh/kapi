@@ -121,6 +121,29 @@ export function injectStyles() {
   width: 100%;
   margin-top: 4px;
 }
+.kapi-sound-gate {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  margin: 0;
+  padding: 16px 20px;
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--kapi-fg, #f5f5f5);
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.kapi-sound-gate.hidden {
+  display: none;
+}
+.kapi-sound-gate:hover {
+  background: rgba(0, 0, 0, 0.65);
+}
 `;
   document.head.appendChild(style);
 }

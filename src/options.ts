@@ -41,6 +41,7 @@ export const DEFAULT_LABELS: Required<KapiUiLabels> = {
   settings: 'Settings',
   hangup: 'Leave',
   you: 'You',
+  enableSound: 'Tap to enable sound',
 };
 
 export function resolveRoomOptions(opts: KapiRoomOptions): Required<
@@ -55,6 +56,7 @@ export function resolveRoomOptions(opts: KapiRoomOptions): Required<
     | 'effects'
     | 'polite'
     | 'autoJoin'
+    | 'leaveOnUnload'
   >
 > &
   KapiRoomOptions {
@@ -74,5 +76,6 @@ export function resolveRoomOptions(opts: KapiRoomOptions): Required<
     },
     polite: opts.polite ?? true,
     autoJoin: opts.autoJoin ?? true,
+    leaveOnUnload: opts.leaveOnUnload ?? true,
   };
 }

@@ -11,7 +11,7 @@ npm install
 npm run demo
 ```
 
-Open [http://localhost:5179](http://localhost:5179), join a room, then open a second tab with the same room id. Details: [demo/README.md](demo/README.md).
+Open [http://localhost:5179](http://localhost:5179), join a room, then open a second tab (or share via `ngrok http 5179`) with the same room id. Details: [demo/README.md](demo/README.md).
 
 ## Install
 

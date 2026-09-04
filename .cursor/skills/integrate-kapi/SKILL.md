@@ -39,7 +39,9 @@ Suggested event: `kapi/signal` with `{ roomId, message }` where `message` is a k
 2. Map `peerId` → connection for the room.
 3. If `message.to` is set: forward to that peer only.
 4. Else: broadcast to other room members.
-5. On `join`: optionally send `{ type: 'peers', peers: [...] }` to the joiner.
+5. On `join`: send `{ type: 'peers', peers: [...] }` to the **joiner only**;
+   broadcast `join` to others for presence. kapi: joiner offers on `peers`;
+   existing peers do not offer on `join` (avoids mesh glare).
 
 ### 3. Client `SignalAdapter`
 

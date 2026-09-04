@@ -32,15 +32,48 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   pane.className = 'kapi-participants hidden';
   const settingsEl = document.createElement('div');
   settingsEl.className = 'kapi-settings hidden';
-  root.append(grid, pane, settingsEl, bar);
   parent.appendChild(root);
 
   const tiles = new Map<string, HTMLVideoElement>();
   const remoteStreams = new Map<string, MediaStream>();
+  /** Separate <audio> for remotes — <video muted> shows picture; audio needs a user gesture. */
+  const remoteAudio = new Map<string, HTMLAudioElement>();
+  let soundUnlocked = false;
   let room: KapiRoom | null = null;
   let disposed = false;
   let bgMode: BackgroundMode = options.effects?.background ?? 'none';
   const unsubs: Array<() => void> = [];
+
+  const soundGate = document.createElement('button');
+  soundGate.type = 'button';
+  soundGate.className = 'kapi-sound-gate hidden';
+  soundGate.textContent = labels.enableSound;
+  root.append(grid, pane, settingsEl, bar, soundGate);
+
+  function showSoundGate() {
+    if (soundUnlocked || disposed) return;
+    soundGate.classList.remove('hidden');
+  }
+
+  function unlockSound() {
+    if (disposed || soundUnlocked) return;
+    soundUnlocked = true;
+    soundGate.classList.add('hidden');
+    for (const audio of remoteAudio.values()) {
+      audio.muted = false;
+      void audio.play().catch(() => undefined);
+    }
+  }
+
+  soundGate.addEventListener('click', unlockSound);
+  // Any in-call click also counts as the autoplay gesture.
+  root.addEventListener(
+    'pointerdown',
+    () => {
+      if (!soundUnlocked && remoteAudio.size > 0) unlockSound();
+    },
+    { passive: true },
+  );
 
   function layoutGrid() {
     const n = Math.max(1, tiles.size);
@@ -57,7 +90,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       video = document.createElement('video');
       video.autoplay = true;
       video.playsInline = true;
-      video.muted = peerId === options.peerId;
+      // Always muted on <video> to satisfy autoplay; remote audio uses <audio>.
+      video.muted = true;
       const tag = document.createElement('span');
       tag.className = 'kapi-label';
       tag.textContent = label;
@@ -68,15 +102,59 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       const tag = video.parentElement?.querySelector('.kapi-label');
       if (tag) tag.textContent = label;
     }
-    if (stream) video.srcObject = stream;
+    if (stream) {
+      if (video.srcObject !== stream) video.srcObject = stream;
+      void video.play().catch(() => undefined);
+      if (peerId !== options.peerId) bindRemoteAudio(peerId, stream);
+    }
     layoutGrid();
     return video;
+  }
+
+  function bindRemoteAudio(peerId: string, stream: MediaStream) {
+    if (!stream.getAudioTracks().length) return;
+    let audio = remoteAudio.get(peerId);
+    if (!audio) {
+      audio = document.createElement('audio');
+      audio.autoplay = true;
+      audio.setAttribute('playsinline', '');
+      audio.style.display = 'none';
+      root.appendChild(audio);
+      remoteAudio.set(peerId, audio);
+    }
+    if (audio.srcObject !== stream) audio.srcObject = stream;
+    if (soundUnlocked) {
+      audio.muted = false;
+      void audio.play().catch(() => undefined);
+      return;
+    }
+    // Try unmuted playback first — joining the call is usually a click, and
+    // Chrome/Firefox often allow audio started near that activation. Only fall
+    // back to muted + the "Tap to enable sound" gate if autoplay is blocked.
+    // Previously every remote started muted, so guests who never clicked the
+    // gate heard nothing.
+    audio.muted = false;
+    void audio
+      .play()
+      .then(() => unlockSound())
+      .catch(() => {
+        if (soundUnlocked || disposed) return;
+        audio!.muted = true;
+        void audio!.play().catch(() => undefined);
+        showSoundGate();
+      });
   }
 
   function removeTile(peerId: string) {
     tiles.get(peerId)?.parentElement?.remove();
     tiles.delete(peerId);
     remoteStreams.delete(peerId);
+    const audio = remoteAudio.get(peerId);
+    if (audio) {
+      audio.srcObject = null;
+      audio.remove();
+      remoteAudio.delete(peerId);
+    }
     layoutGrid();
   }
 
@@ -150,7 +228,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     b.type = 'button';
     b.dataset.id = id;
     paintButton(b, id, text, false);
-    b.addEventListener('click', onClick);
+    b.addEventListener('click', () => {
+      unlockSound();
+      onClick();
+    });
     return b;
   }
 
@@ -159,6 +240,11 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     disposed = true;
     unsubs.forEach((u) => u());
     unsubs.length = 0;
+    for (const audio of remoteAudio.values()) {
+      audio.srcObject = null;
+      audio.remove();
+    }
+    remoteAudio.clear();
     void room?.hangup();
     room = null;
     root.remove();
@@ -210,7 +296,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     bar.appendChild(makeButton(id, text, actions[id]));
   }
 
-  void KapiRoom.join(options)
+  // Wire UI events before announce so a sync `peers` roster is not missed.
+  void KapiRoom.join({ ...options, autoJoin: false })
     .then((r) => {
       if (disposed) {
         void r.hangup();
@@ -247,6 +334,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
           const refresh = () => {
             if (video.srcObject !== stream) video.srcObject = stream;
             void video.play().catch(() => undefined);
+            bindRemoteAudio(peerId, stream);
           };
           track.addEventListener('unmute', refresh);
           track.addEventListener('resize', refresh);
@@ -255,6 +343,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         r.on('error', ({ error }) => options.onError?.(error)),
         r.on('hangup', () => options.onHangup?.()),
       );
+
+      if (options.autoJoin !== false) r.announce();
     })
     .catch((err) => {
       options.onError?.(err instanceof Error ? err : new Error(String(err)));

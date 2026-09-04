@@ -27,6 +27,22 @@ export class KapiRoom {
   private closed = false;
   private micEnabled = true;
   private camEnabled = true;
+  /** Serialize signal handling so ICE cannot race ahead of offer/answer. */
+  private signalChain: Promise<void> = Promise.resolve();
+  /** Negotiations skipped while a peer was mid-offer — flushed on `stable`. */
+  private readonly pendingNegotiation = new Map<string, { iceRestart?: boolean }>();
+  private readonly restartAttempts = new Map<string, number>();
+  private readonly restartTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Bound once so start/hangup can add/remove the same unload listener. */
+  private readonly onPageUnload = () => {
+    // hangup()'s body is fully synchronous, so the `leave` message is queued
+    // before the unload completes (fetch keepalive / BroadcastChannel /
+    // WebSocket all flush from a pagehide handler).
+    void this.hangup();
+  };
+  /** Transient drops (Wi-Fi roam, slow TURN) get this many ICE-restart tries
+   *  before the link is torn down. */
+  private static readonly MAX_ICE_RESTARTS = 3;
 
   private constructor(opts: KapiRoomOptions) {
     this.options = resolveRoomOptions(opts);
@@ -70,7 +86,22 @@ export class KapiRoom {
   }
 
   private async start() {
-    this.unsubSignal = this.options.signal.onMessage((msg) => void this.onSignal(msg));
+    // F5 / tab close / navigation: notify the room immediately instead of
+    // leaving remote peers to discover the drop via slow ICE timeouts.
+    // pagehide = modern + mobile-safe; beforeunload = legacy fallback
+    // (hangup is idempotent, so firing both is harmless).
+    if (this.options.leaveOnUnload && typeof window !== 'undefined') {
+      window.addEventListener('pagehide', this.onPageUnload);
+      window.addEventListener('beforeunload', this.onPageUnload);
+    }
+
+    this.unsubSignal = this.options.signal.onMessage((msg) => {
+      this.signalChain = this.signalChain
+        .then(() => this.onSignal(msg))
+        .catch((err) => {
+          this.emit('error', { error: err instanceof Error ? err : new Error(String(err)) });
+        });
+    });
 
     this.rawCameraStream = await getLocalStream(this.options.media!);
     this.localStream = this.rawCameraStream;
@@ -81,13 +112,25 @@ export class KapiRoom {
 
     this.emit('local-stream', { stream: this.localStream });
 
+    // Defer announce so callers can attach listeners after `await KapiRoom.join()`
+    // (or mount's `.then`) before `peers` arrives — otherwise peer-joined is missed
+    // when signaling delivers the roster synchronously.
     if (this.options.autoJoin) {
-      this.options.signal.send({
-        type: 'join',
-        peerId: this.options.peerId,
-        displayName: this.options.displayName,
-      });
+      setTimeout(() => {
+        if (this.closed) return;
+        this.announce();
+      }, 0);
     }
+  }
+
+  /** Send room join (roster / presence). Safe to call once after wiring events. */
+  announce() {
+    if (this.closed) return;
+    this.options.signal.send({
+      type: 'join',
+      peerId: this.options.peerId,
+      displayName: this.options.displayName,
+    });
   }
 
   private isPoliteToward(remoteId: string): boolean {
@@ -121,11 +164,41 @@ export class KapiRoom {
       onTrack: (track, streams) =>
         this.emit('track', { peerId: remoteId, track, streams }),
       onConnectionState: (state) => {
-        if (state === 'failed' || state === 'closed') this.removePeer(remoteId);
+        if (state === 'connected') {
+          this.restartAttempts.delete(remoteId);
+          this.clearRestartTimer(remoteId);
+        } else if (state === 'disconnected') {
+          // Often transient — wait briefly, restart ICE if it does not recover.
+          this.clearRestartTimer(remoteId);
+          const timer = setTimeout(() => {
+            const cur = this.peers.get(remoteId);
+            if (
+              cur &&
+              (cur.pc.connectionState === 'disconnected' ||
+                cur.pc.connectionState === 'failed')
+            ) {
+              void this.restartIce(remoteId);
+            }
+          }, 2500);
+          this.restartTimers.set(remoteId, timer);
+        } else if (state === 'failed') {
+          // Do not tear down on first failure — previously a single hiccup
+          // permanently killed the link (remote kept a frozen tile, this side
+          // lost the peer entirely). Try ICE restart first.
+          void this.restartIce(remoteId);
+        } else if (state === 'closed') {
+          this.removePeer(remoteId);
+        }
+      },
+      onStable: () => {
+        const pending = this.pendingNegotiation.get(remoteId);
+        if (!pending) return;
+        this.pendingNegotiation.delete(remoteId);
+        void this.negotiate(remoteId, pending.iceRestart);
       },
     });
 
-    if (this.localStream) peer.addLocalTracks(this.localStream);
+    if (this.localStream) await peer.addLocalTracks(this.localStream);
     this.peers.set(remoteId, peer);
     this.peerMeta.set(remoteId, { peerId: remoteId, displayName });
     this.emit('peer-joined', { peerId: remoteId, displayName });
@@ -135,17 +208,43 @@ export class KapiRoom {
   private removePeer(remoteId: string) {
     const peer = this.peers.get(remoteId);
     if (!peer) return;
+    this.clearRestartTimer(remoteId);
+    this.restartAttempts.delete(remoteId);
+    this.pendingNegotiation.delete(remoteId);
     peer.close();
     this.peers.delete(remoteId);
     this.peerMeta.delete(remoteId);
     this.emit('peer-left', { peerId: remoteId });
   }
 
-  private async negotiate(remoteId: string) {
-    const peer = await this.ensurePeer(remoteId);
-    if (!peer) return;
+  private clearRestartTimer(remoteId: string) {
+    const timer = this.restartTimers.get(remoteId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.restartTimers.delete(remoteId);
+    }
+  }
+
+  /**
+   * Offer to a peer. Pass iceRestart to recover a broken link.
+   * If the peer is mid-offer, the negotiation is queued and flushed when
+   * signaling returns to `stable` (previously such offers were silently
+   * dropped, which lost screen-share / ICE-restart renegotiations).
+   */
+  private async negotiate(remoteId: string, iceRestart = false) {
+    const peer = this.peers.get(remoteId);
+    if (!peer || this.closed) return;
+    if (peer.makingOffer || peer.pc.signalingState !== 'stable') {
+      const prev = this.pendingNegotiation.get(remoteId);
+      this.pendingNegotiation.set(remoteId, { iceRestart: prev?.iceRestart || iceRestart });
+      return;
+    }
     try {
-      const sdp = await peer.createAndSetOffer(this.options.videoCodec, this.options.maxBitrate);
+      const sdp = await peer.createAndSetOffer(
+        this.options.videoCodec,
+        this.options.maxBitrate,
+        iceRestart,
+      );
       this.options.signal.send({
         type: 'offer',
         sdp,
@@ -157,15 +256,39 @@ export class KapiRoom {
     }
   }
 
+  private async restartIce(remoteId: string) {
+    const peer = this.peers.get(remoteId);
+    if (!peer || this.closed) return;
+    const attempts = (this.restartAttempts.get(remoteId) ?? 0) + 1;
+    if (attempts > KapiRoom.MAX_ICE_RESTARTS) {
+      this.emit('error', {
+        error: new Error(
+          `Connection to ${remoteId} failed — often NAT/firewall; configure a TURN server in iceServers`,
+        ),
+      });
+      this.removePeer(remoteId);
+      return;
+    }
+    this.restartAttempts.set(remoteId, attempts);
+    // Both sides may restart at once — perfect negotiation resolves the glare.
+    await this.negotiate(remoteId, true);
+  }
+
   private async onSignal(msg: SignalMessage) {
     if (this.closed) return;
     try {
       switch (msg.type) {
         case 'join':
           if (msg.peerId === this.options.peerId) return;
+          // A join from an id we already have means the remote instance
+          // restarted (F5/crash) and its `leave` never reached us — tear down
+          // the stale link first so the fresh offer lands on a clean
+          // RTCPeerConnection instead of a zombie one (which could also be
+          // mid-ICE-restart with a pending local offer → glare / ignored offer).
+          if (this.peers.has(msg.peerId)) this.removePeer(msg.peerId);
+          // Presence only — the joiner receives `peers` and offers to us (avoids
+          // glare when 3+ peers join a mesh). Host relay must send `peers`.
           await this.ensurePeer(msg.peerId, msg.displayName);
-          // Both sides may offer; polite perfect-negotiation resolves glare.
-          await this.negotiate(msg.peerId);
           break;
         case 'leave':
           this.removePeer(msg.peerId);
@@ -331,14 +454,20 @@ export class KapiRoom {
       const track = stream.getAudioTracks()[0];
       if (!track) return;
       for (const peer of this.peers.values()) await peer.replaceTrack('audio', track);
-      const target = this.rawCameraStream ?? this.localStream;
-      if (target) {
-        const old = target.getAudioTracks()[0];
-        if (old) {
+      // Swap the mic track in every stream that exposes it — raw camera plus
+      // the current localStream, which may be the background-processed canvas
+      // stream or the screen-share preview (both carry audio tracks of their
+      // own; the old track was previously left in them, stopped).
+      const targets = new Set<MediaStream>(
+        [this.rawCameraStream, this.localStream].filter((s): s is MediaStream => !!s),
+      );
+      for (const target of targets) {
+        for (const old of target.getAudioTracks()) {
+          if (old === track) continue;
           target.removeTrack(old);
           old.stop();
         }
-        target.addTrack(track);
+        if (!target.getAudioTracks().includes(track)) target.addTrack(track);
       }
       track.enabled = this.micEnabled;
       if (this.localStream) this.emit('local-stream', { stream: this.localStream });
@@ -370,9 +499,17 @@ export class KapiRoom {
   async hangup() {
     if (this.closed) return;
     this.closed = true;
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('pagehide', this.onPageUnload);
+      window.removeEventListener('beforeunload', this.onPageUnload);
+    }
     this.options.signal.send({ type: 'leave', peerId: this.options.peerId });
     this.unsubSignal?.();
     this.unsubSignal = null;
+    for (const timer of this.restartTimers.values()) clearTimeout(timer);
+    this.restartTimers.clear();
+    this.pendingNegotiation.clear();
+    this.restartAttempts.clear();
     for (const id of [...this.peers.keys()]) this.removePeer(id);
     this.background?.stop();
     this.background = null;

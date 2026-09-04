@@ -4,6 +4,9 @@ export type PeerCallbacks = {
   onIce: (candidate: RTCIceCandidateInit) => void;
   onTrack: (track: MediaStreamTrack, streams: readonly MediaStream[]) => void;
   onConnectionState?: (state: RTCPeerConnectionState) => void;
+  /** Fired whenever signaling returns to `stable` — lets the room flush
+   *  negotiations that were skipped while an offer/answer round was in flight. */
+  onStable?: () => void;
 };
 
 export class KapiPeer {
@@ -14,6 +17,8 @@ export class KapiPeer {
   private readonly polite: boolean;
   private readonly audioSender: RTCRtpSender;
   private readonly videoSender: RTCRtpSender;
+  /** ICE may arrive before setRemoteDescription — queue until ready. */
+  private readonly pendingIce: RTCIceCandidateInit[] = [];
 
   constructor(
     peerId: string,
@@ -35,13 +40,18 @@ export class KapiPeer {
     this.pc.onconnectionstatechange = () => {
       this.cb.onConnectionState?.(this.pc.connectionState);
     };
+    this.pc.onsignalingstatechange = () => {
+      if (this.pc.signalingState === 'stable') this.cb.onStable?.();
+    };
   }
 
-  addLocalTracks(stream: MediaStream) {
+  async addLocalTracks(stream: MediaStream) {
     const audio = stream.getAudioTracks()[0];
     const video = stream.getVideoTracks()[0];
-    if (audio) void this.audioSender.replaceTrack(audio);
-    if (video) void this.videoSender.replaceTrack(video);
+    await Promise.all([
+      audio ? this.audioSender.replaceTrack(audio) : Promise.resolve(),
+      video ? this.videoSender.replaceTrack(video) : Promise.resolve(),
+    ]);
   }
 
   async replaceTrack(kind: 'audio' | 'video', track: MediaStreamTrack | null) {
@@ -49,11 +59,15 @@ export class KapiPeer {
     await sender.replaceTrack(track);
   }
 
-  async createAndSetOffer(videoCodec?: string, maxBitrate?: number): Promise<string> {
+  async createAndSetOffer(
+    videoCodec?: string,
+    maxBitrate?: number,
+    iceRestart = false,
+  ): Promise<string> {
     this.makingOffer = true;
     try {
       if (videoCodec) await applyVideoCodecPreference(this.pc, videoCodec);
-      const offer = await this.pc.createOffer();
+      const offer = await this.pc.createOffer({ iceRestart });
       await this.pc.setLocalDescription(offer);
       if (maxBitrate) await applyMaxBitrate(this.pc, maxBitrate);
       return this.pc.localDescription!.sdp;
@@ -71,7 +85,21 @@ export class KapiPeer {
     this.ignoreOffer = !this.polite && offerCollision;
     if (this.ignoreOffer) return null;
 
+    if (offerCollision && this.pc.signalingState === 'have-local-offer') {
+      // Perfect negotiation: the polite side must roll back its pending offer
+      // before accepting the remote one. Without this, setRemoteDescription
+      // throws InvalidStateError on browsers without implicit rollback and the
+      // link silently never connects (one-way / missing media).
+      try {
+        await this.pc.setLocalDescription({ type: 'rollback' });
+      } catch {
+        // Older browsers without rollback support — continue and let
+        // setRemoteDescription either implicitly roll back or throw.
+      }
+    }
+
     await this.pc.setRemoteDescription({ type: 'offer', sdp });
+    await this.flushIce();
     if (videoCodec) await applyVideoCodecPreference(this.pc, videoCodec);
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);
@@ -80,11 +108,24 @@ export class KapiPeer {
   }
 
   async handleAnswer(sdp: string) {
-    if (this.ignoreOffer) return;
+    // Never skip answers — ignoreOffer only applies to colliding *offers*.
+    // Skipping the answer after glare left the impolite peer without a remote
+    // description (media never connected). That regressed vs BroadcastChannel
+    // demos where only one side offered.
+    this.ignoreOffer = false;
+    if (this.pc.signalingState === 'stable') {
+      // Already settled (e.g. duplicate answer) — ignore.
+      return;
+    }
     await this.pc.setRemoteDescription({ type: 'answer', sdp });
+    await this.flushIce();
   }
 
   async handleIce(candidate: RTCIceCandidateInit) {
+    if (!this.pc.remoteDescription) {
+      this.pendingIce.push(candidate);
+      return;
+    }
     try {
       await this.pc.addIceCandidate(candidate);
     } catch (err) {
@@ -92,9 +133,19 @@ export class KapiPeer {
     }
   }
 
+  private async flushIce() {
+    const pending = this.pendingIce.splice(0);
+    for (const candidate of pending) {
+      await this.handleIce(candidate);
+    }
+  }
+
   close() {
+    this.pendingIce.length = 0;
     this.pc.onicecandidate = null;
     this.pc.ontrack = null;
+    this.pc.onconnectionstatechange = null;
+    this.pc.onsignalingstatechange = null;
     this.pc.close();
   }
 }

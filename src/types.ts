@@ -52,6 +52,16 @@ export interface KapiRoomOptions {
   /** Preferred video codec mime, e.g. video/VP8 */
   videoCodec?: string;
   autoJoin?: boolean;
+  /**
+   * Send `leave` (hangup) when the page unloads — F5, tab close, navigation.
+   * Without this, remote peers only notice the departure after ICE timeouts
+   * (~15–30s) and keep showing a frozen tile. Default true.
+   *
+   * Note: `SignalAdapter.send` must be synchronous-safe during unload
+   * (BroadcastChannel postMessage, WebSocket send, or fetch with
+   * `keepalive: true`/sendBeacon for HTTP).
+   */
+  leaveOnUnload?: boolean;
 }
 
 export type RoomEventMap = {
@@ -86,6 +96,7 @@ export interface KapiUiLabels {
   settings?: string;
   hangup?: string;
   you?: string;
+  enableSound?: string;
 }
 
 export interface KapiMountOptions extends KapiRoomOptions {

@@ -25,6 +25,10 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
   maxBitrate?: number
   videoCodec?: string        // e.g. 'video/VP8'
   autoJoin?: boolean         // default true
+  leaveOnUnload?: boolean    // default true — send `leave` on pagehide/beforeunload
+                             // (F5, tab close) so peers drop you instantly instead
+                             // of after ICE timeouts. Adapter send must be
+                             // unload-safe (keepalive fetch / BroadcastChannel / WS).
 }
 ```
 

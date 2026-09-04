@@ -5,6 +5,7 @@ export function createLocalSignalBus(): {
   createAdapter(peerId: string): SignalAdapter;
 } {
   const listeners = new Map<string, Set<(msg: SignalMessage) => void>>();
+  const roster = new Map<string, string | undefined>();
 
   return {
     createAdapter(peerId: string): SignalAdapter {
@@ -15,6 +16,18 @@ export function createLocalSignalBus(): {
             msg.type === 'offer' || msg.type === 'answer' || msg.type === 'ice'
               ? { ...msg, from: peerId }
               : msg;
+
+          if (msg.type === 'join') {
+            roster.set(peerId, msg.displayName);
+            // Snapshot for the joiner (full mesh: joiner offers to existing).
+            const peers = [...roster.entries()]
+              .filter(([id]) => id !== msg.peerId)
+              .map(([id, displayName]) => ({ peerId: id, displayName }));
+            if (peers.length) {
+              listeners.get(msg.peerId)?.forEach((fn) => fn({ type: 'peers', peers }));
+            }
+          }
+          if (msg.type === 'leave') roster.delete(msg.peerId);
 
           if ('to' in withFrom && withFrom.to) {
             listeners.get(withFrom.to)?.forEach((fn) => fn(withFrom));
@@ -42,18 +55,48 @@ export function createBroadcastSignalAdapter(
 ): SignalAdapter {
   const bc = new BroadcastChannel(channelName);
   const handlers = new Set<(msg: SignalMessage) => void>();
+  /** Other peers we have seen in this channel. */
+  const roster = new Map<string, string | undefined>();
+  let myDisplayName: string | undefined;
+
+  const deliver = (msg: SignalMessage) => {
+    handlers.forEach((fn) => fn(msg));
+  };
 
   bc.onmessage = (ev) => {
-    const msg = ev.data as SignalMessage & { _from?: string };
+    const msg = ev.data as SignalMessage & { _from?: string; _to?: string };
     if (msg._from === peerId) return;
+    if (msg._to && msg._to !== peerId) return;
     if ('to' in msg && msg.to && msg.to !== peerId) return;
-    const { _from, ...rest } = msg as SignalMessage & { _from?: string };
+
+    if (msg.type === 'join') {
+      roster.set(msg.peerId, msg.displayName);
+      // Existing tab → send roster to the joiner so they can offer (mesh).
+      const peers = [
+        { peerId, displayName: myDisplayName },
+        ...[...roster.entries()]
+          .filter(([id]) => id !== msg.peerId)
+          .map(([id, displayName]) => ({ peerId: id, displayName })),
+      ];
+      bc.postMessage({
+        type: 'peers',
+        peers,
+        _from: peerId,
+        _to: msg.peerId,
+      });
+    } else if (msg.type === 'leave') {
+      roster.delete(msg.peerId);
+    }
+
+    const { _from, _to, ...rest } = msg as SignalMessage & { _from?: string; _to?: string };
     void _from;
-    handlers.forEach((fn) => fn(rest));
+    void _to;
+    deliver(rest);
   };
 
   return {
     send(msg) {
+      if (msg.type === 'join') myDisplayName = msg.displayName;
       const withFrom =
         msg.type === 'offer' || msg.type === 'answer' || msg.type === 'ice'
           ? { ...msg, from: peerId, _from: peerId }

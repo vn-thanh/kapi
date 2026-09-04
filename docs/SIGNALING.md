@@ -25,7 +25,18 @@ interface SignalAdapter {
 1. Auth + room membership check
 2. Direct messages when `to` is set (`offer` / `answer` / `ice`)
 3. Broadcast `join` / `leave` to other members
-4. Optional `peers` snapshot for late joiners
+4. **Send `peers` snapshot to the joiner** (required for mesh). kapi makes the
+   joiner offer to each listed peer; existing peers treat `join` as presence only.
+   Do not also have existing peers offer on `join` — that causes glare with 3+ peers.
+5. **Synthesize `leave` when a member's transport dies** (WebSocket close, poll
+   timeout). kapi sends `leave` on page unload (`leaveOnUnload`, default true),
+   but unload is best-effort — the server-side fallback keeps rosters free of
+   ghosts when it is lost.
+
+> HTTP adapters: make `send` unload-safe — `fetch(url, { keepalive: true })` or
+> `navigator.sendBeacon`. A plain `fetch`/`XMLHttpRequest` queued during
+> `pagehide` is routinely cancelled, which recreates the "frozen tile after F5"
+> bug the unload hook exists to fix.
 
 ## Client
 
