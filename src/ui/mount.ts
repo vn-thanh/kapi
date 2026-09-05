@@ -779,6 +779,11 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   // ---------- reactions (Jitsi-style floating emojis) ----------
 
   const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🎉', '👏', '👎'];
+  /** Host-provided emoji set, sanitized to what the wire protocol accepts. */
+  const reactionChoices = (options.reactions ?? REACTIONS)
+    .map((e) => (typeof e === 'string' ? e.trim() : ''))
+    .filter((e) => e.length > 0 && e.length <= 24)
+    .slice(0, 16);
   /** Cap concurrent floats so a reaction storm cannot flood the DOM. */
   const MAX_FLOATS = 24;
 
@@ -813,7 +818,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     unsubs.push(() => md.removeEventListener('devicechange', onDeviceChange));
   }
 
-  for (const emoji of REACTIONS) {
+  for (const emoji of reactionChoices) {
     const b = document.createElement('button');
     b.type = 'button';
     b.textContent = emoji;

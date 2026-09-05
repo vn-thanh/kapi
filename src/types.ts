@@ -267,6 +267,13 @@ export interface KapiMountOptions extends KapiRoomOptions {
    * Default true.
    */
   shortcuts?: boolean;
+  /**
+   * Emoji choices shown in the reaction picker (default: the classic 8 —
+   * 👍 ❤️ 😂 😮 😢 🎉 👏 👎). Entries are trimmed; empties and entries over
+   * 24 chars are dropped (matching `sendReaction`'s on-wire cap) and the
+   * picker shows at most 16.
+   */
+  reactions?: string[];
   onHangup?: () => void;
   onReady?: (room: import('./core/room').KapiRoom) => void;
   onError?: (error: Error) => void;

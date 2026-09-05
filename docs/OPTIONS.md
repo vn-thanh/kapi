@@ -121,6 +121,10 @@ may renegotiate peers.
                            // Jitsi-style: M toggles mic, V toggles camera.
                            // Scoped to the mounted UI and ignored while a
                            // form control has focus.
+  reactions?: string[]     // emoji choices in the reaction picker (default:
+                           // 👍 ❤️ 😂 😮 😢 🎉 👏 👎). Trimmed; empties and
+                           // entries over 24 chars are dropped (matching the
+                           // sendReaction wire cap); max 16 shown.
   onHangup?: () => void
   onReady?: (room: KapiRoom) => void
   onError?: (error: Error) => void
