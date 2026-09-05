@@ -35,4 +35,4 @@ Send the `https://….ngrok-free.app` link. Both people join the **same room id*
 - Needs **localhost** or HTTPS for camera/mic (ngrok HTTPS is fine).
 - Older BroadcastChannel-only demos only worked across tabs on the **same** browser — that is why sharing a link alone used to fail.
 - Default demo `iceServers` include a public TURN (Open Relay) so media works across NATs when sharing via ngrok. For production, use your own TURN credentials.
-- Optional query: `?room=my-room&name=Ada&avatar=https://…/photo.jpg&autostart=1`
+- Optional query: `?room=my-room&name=Ada&avatar=https://…/photo.jpg&mic=1&cam=1&autostart=1` (`mic`/`cam` pre-tick the lobby toggles)

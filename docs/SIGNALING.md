@@ -12,6 +12,7 @@ type SignalMessage =
   | { type: 'leave'; peerId: string }
   | { type: 'offer' | 'answer'; sdp: string; to: string; from?: string }
   | { type: 'ice'; candidate: RTCIceCandidateInit; to: string; from?: string }
+  | { type: 'reaction'; emoji: string; from?: string }
   | { type: 'peers'; peers: { peerId: string; displayName?: string; avatarUrl?: string }[] }
   | { type: 'media-state'; peerId: string; sharing: boolean; mic?: boolean; cam?: boolean; to?: string }
   | { type: 'video-hint'; to: string; width: number; height: number; from?: string }
@@ -26,7 +27,7 @@ interface SignalAdapter {
 
 1. Auth + room membership check
 2. Direct messages when `to` is set (`offer` / `answer` / `ice` / `video-hint` / targeted `media-state`)
-3. Broadcast `join` / `leave` / `media-state` (no `to`) to other members
+3. Broadcast `join` / `leave` / `reaction` / `media-state` (no `to`) to other members
 4. **Send `peers` snapshot to the joiner** (required for mesh). kapi makes the
    joiner offer to each listed peer; existing peers treat `join` as presence only.
    Do not also have existing peers offer on `join` — that causes glare with 3+ peers.

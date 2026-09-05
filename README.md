@@ -252,6 +252,7 @@ type SignalMessage =
   | { type: 'reaction'; emoji: string; from?: string }
   | { type: 'peers'; peers: { peerId: string; displayName?: string; avatarUrl?: string }[] }
   | { type: 'media-state'; peerId: string; sharing: boolean; mic?: boolean; cam?: boolean; to?: string }
+  | { type: 'video-hint'; to: string; width: number; height: number; from?: string }
 ```
 
 A drop-in Socket.IO adapter, client side:
