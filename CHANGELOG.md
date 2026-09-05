@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project is maintained by [release-please](https://github.com/googleapis/release-please) — future entries are generated automatically from Conventional Commits.
 
+## [1.2.0](https://github.com/vn-thanh/kapi/compare/v1.1.0...v1.2.0) (2026-09-05)
+
+
+### Features
+
+* custom reaction emoji set via the reactions option ([5d785b8](https://github.com/vn-thanh/kapi/commit/5d785b8e55f46f988d1122ae605d082e0aed35d6))
+* in-call keyboard shortcuts (M mute, V camera) with opt-out ([706943e](https://github.com/vn-thanh/kapi/commit/706943e117619ac2b56bb000be3d61b8ded3656a))
+* join muted by default and show connection quality bars ([719c45c](https://github.com/vn-thanh/kapi/commit/719c45cdfd05744a3c118738880b907b94593a1c))
+* overridable device/muted labels and a layout tooltip that tracks the view ([61db628](https://github.com/vn-thanh/kapi/commit/61db628920359196abab4eeb37fa19c12ab8e874))
+* support custom peer avatars and clearer hang-up icon ([dd63314](https://github.com/vn-thanh/kapi/commit/dd6331498f9eadcfcbcfbde7dee62ba2205e224a))
+
+
+### Bug Fixes
+
+* a throwing signal adapter can no longer wedge negotiation or hangup ([82560ce](https://github.com/vn-thanh/kapi/commit/82560ce629467ce140a847da4a9e8a75858c1a1c))
+
+
+### Performance Improvements
+
+* reuse the segmentation mask raster instead of allocating one per frame ([f0653c2](https://github.com/vn-thanh/kapi/commit/f0653c20df412590174335ae903eb37772becb40))
+
 ## [Unreleased]
 
 ### Added
