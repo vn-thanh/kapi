@@ -4,16 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project is maintained by [release-please](https://github.com/googleapis/release-please) — future entries are generated automatically from Conventional Commits.
 
-## [Unreleased]
+## [1.2.0](https://github.com/vn-thanh/kapi/releases/tag/v1.2.0) (2026-09-05)
 
 ### Added
 
 - **Initial mic/cam + acquire policy** — `media.startMic` / `media.startCam` (default `false`) and `media.acquire: 'join' | 'on-enable'` so hosts can join muted/camera-off or delay `getUserMedia` until the user enables a device. `setMic` / `setCam` are async and acquire missing tracks when needed.
 - **Connection quality** — `connectionQuality` option (default on) samples inbound loss + RTT and emits `connection-quality` (`excellent` / `good` / `poor` / `lost` / `unknown`). Built-in UI signal bars via `connectionQualityUi: 'bars' | 'dot' | 'off'`; overridable labels and score thresholds. Helpers: `scoreConnectionQuality`, `readQualitySample`.
+- **Keyboard shortcuts** — Jitsi-style `M` (mic) / `V` (camera) in-call shortcuts, scoped to the mounted UI and ignored while typing; opt out with `shortcuts: false`.
+- **Custom reaction set** — `reactions: string[]` replaces the built-in emoji picks (sanitized against the 24-char wire cap, max 16 shown).
+- **More label overrides** — `labels.microphone` / `labels.camera` (settings panel), `labels.muted` (mute-chip aria), and per-view tooltips `labels.layoutGrid` / `layoutSpotlight` / `layoutSidebar` so the view button's tooltip tracks the current layout (a custom static `labels.layout` is still honored).
 
 ### Changed
 
 - Joining no longer starts with mic and camera on by default (privacy-friendly). Pass `media: { startMic: true, startCam: true }` for the previous behaviour.
+
+### Fixed
+
+- **Signaling robustness** — a host `SignalAdapter.send` that throws (socket already closed, HTTP hiccup) now surfaces as a recoverable `error` event everywhere instead of aborting `hangup()` mid-teardown (leaked tracks/timers) or escaping the auto-join timer as an uncaught exception. Guarded by a new headless self-check.
+- **Docs contract** — README / SIGNALING.md `SignalMessage` listings and relay rules brought in sync with the code (`video-hint`, `reaction`).
+
+### Performance
+
+- **Background effects** — the segmentation mask raster is reused across frames (was a fresh `ImageData` per frame at 30fps ≈ 8 MB/s of GC churn); the single-channel selfie-model path skips the per-frame channel map entirely.
 
 ## [1.1.0](https://github.com/vn-thanh/kapi/releases/tag/v1.1.0) (2026-09-05)
 
