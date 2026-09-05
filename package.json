@@ -1,6 +1,6 @@
 {
   "name": "@vn-thanh/kapi",
-  "version": "1.2.0",
+  "version": "1.1.0",
   "description": "Browser WebRTC P2P mesh calls — no media server, pluggable signaling, optional background removal",
   "license": "MIT",
   "author": "Thanh Vu <108888676+vn-thanh@users.noreply.github.com>",
