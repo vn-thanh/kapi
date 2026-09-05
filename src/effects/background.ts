@@ -32,6 +32,9 @@ export class BackgroundProcessor {
    *  scaled by drawImage, so per-pixel JS compositing is unnecessary. */
   private maskCanvas: HTMLCanvasElement | null = null;
   private maskCtx: CanvasRenderingContext2D | null = null;
+  /** Raster target for the mask — reused across frames; the mask size is
+   *  model-fixed, so a fresh one per frame at 30fps was pure GC churn. */
+  private maskImageData: ImageData | null = null;
   private personCanvas: HTMLCanvasElement | null = null;
   private personCtx: CanvasRenderingContext2D | null = null;
   private outStream: MediaStream | null = null;
@@ -189,6 +192,7 @@ export class BackgroundProcessor {
     this.ctx = null;
     this.maskCanvas = null;
     this.maskCtx = null;
+    this.maskImageData = null;
     this.personCanvas = null;
     this.personCtx = null;
     this.bgImage = null;
@@ -260,23 +264,29 @@ export class BackgroundProcessor {
     const mh = primary.height;
     if (this.maskCanvas.width !== mw) this.maskCanvas.width = mw;
     if (this.maskCanvas.height !== mh) this.maskCanvas.height = mh;
-    const maskRgba = this.maskCtx!.createImageData(mw, mh);
-    const channels = masks.map((m) => m.getAsFloat32Array());
-    const singleChannel = channels.length === 1;
-    for (let i = 0; i < channels[0]!.length; i++) {
-      let person: number;
-      if (singleChannel) {
-        // Channel 0 = person (foreground) probability.
-        person = channels[0]![i]!;
-      } else {
-        // Multiclass: background is channel 0; person = any other class.
-        person = 0;
+    const maskRgba =
+      this.maskImageData && this.maskImageData.width === mw && this.maskImageData.height === mh
+        ? this.maskImageData
+        : (this.maskImageData = this.maskCtx!.createImageData(mw, mh));
+    if (masks.length === 1) {
+      // Single-channel selfie models: channel 0 = person (foreground)
+      // probability — the common case, kept allocation-free.
+      const ch = masks[0]!.getAsFloat32Array();
+      for (let i = 0; i < ch.length; i++) {
+        maskRgba.data[i * 4 + 3] = Math.min(1, Math.max(0, ch[i]!)) * 255;
+      }
+    } else {
+      // Multiclass (multiclass selfie, deeplab): background is channel 0;
+      // person = any other class.
+      const channels = masks.map((m) => m.getAsFloat32Array());
+      for (let i = 0; i < channels[0]!.length; i++) {
+        let person = 0;
         for (let c = 1; c < channels.length; c++) {
           const v = channels[c]![i]!;
           if (v > person) person = v;
         }
+        maskRgba.data[i * 4 + 3] = Math.min(1, Math.max(0, person)) * 255;
       }
-      maskRgba.data[i * 4 + 3] = Math.min(1, Math.max(0, person)) * 255;
     }
     this.maskCtx!.putImageData(maskRgba, 0, 0);
 
