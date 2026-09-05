@@ -124,10 +124,16 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   bar.className = 'kapi-toolbar';
   const pane = document.createElement('div');
   pane.className = 'kapi-panel kapi-participants hidden';
+  pane.setAttribute('role', 'region');
+  pane.setAttribute('aria-label', labels.participants);
   const settingsEl = document.createElement('div');
   settingsEl.className = 'kapi-panel kapi-settings hidden';
+  settingsEl.setAttribute('role', 'region');
+  settingsEl.setAttribute('aria-label', labels.settings);
   const reactPanel = document.createElement('div');
   reactPanel.className = 'kapi-reaction-picker hidden';
+  reactPanel.setAttribute('role', 'group');
+  reactPanel.setAttribute('aria-label', labels.react);
   const overflowMenu = document.createElement('div');
   overflowMenu.className = 'kapi-overflow hidden';
   overflowMenu.id = `kapi-overflow-${selfId.replace(/[^a-zA-Z0-9_-]/g, '') || 'menu'}`;
@@ -402,11 +408,23 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     scheduleHints();
   }
 
+  /** View-button tooltip tracks the current layout. A host that customized
+   *  the legacy static `layout` label keeps their text unless they also
+   *  override the per-view label. */
+  function layoutTip(mode: KapiLayout): string {
+    const key =
+      mode === 'grid' ? 'layoutGrid' : mode === 'spotlight' ? 'layoutSpotlight' : 'layoutSidebar';
+    if (labels[key] === DEFAULT_LABELS[key] && labels.layout !== DEFAULT_LABELS.layout) {
+      return labels.layout;
+    }
+    return labels[key];
+  }
+
   function setLayout(mode: KapiLayout) {
     if (mode === layoutMode || !LAYOUTS.includes(mode)) return;
     layoutMode = mode;
     const b = buttons.get('layout');
-    if (b) paintButton(b, 'layout', labels.layout);
+    if (b) paintButton(b, 'layout', layoutTip(mode));
     applyLayout();
   }
 
@@ -680,7 +698,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     }
     tile.micChip.classList.toggle('hidden', !micOff);
     tile.micChip.setAttribute('aria-hidden', micOff ? 'false' : 'true');
-    if (micOff) tile.micChip.setAttribute('aria-label', 'Muted');
+    if (micOff) tile.micChip.setAttribute('aria-label', labels.muted);
     else tile.micChip.removeAttribute('aria-label');
   }
 
@@ -916,7 +934,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         const mute = document.createElement('span');
         mute.className = 'kapi-roster-mute';
         mute.innerHTML = statusIconHtml('micOff');
-        mute.setAttribute('aria-label', 'Muted');
+        mute.setAttribute('aria-label', labels.muted);
         if (p.peerId !== selfId && connUi === 'bars') mute.style.marginLeft = '0';
         li.append(mute);
       }
@@ -967,7 +985,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       } else if (id === 'background') {
         paintButton(b, id, labels.background);
       } else if (id === 'layout') {
-        paintButton(b, id, labels.layout);
+        paintButton(b, id, layoutTip(layoutMode));
       } else {
         const text = (labels as Record<string, string>)[id] ?? b.title;
         paintButton(b, id, text);
@@ -1037,10 +1055,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       settingsEl.appendChild(wrap);
     };
 
-    addSelect('Microphone', 'audioinput', 'audio', (id) => {
+    addSelect(labels.microphone, 'audioinput', 'audio', (id) => {
       room?.switchDevice('audioinput', id).catch(reportError);
     });
-    addSelect('Camera', 'videoinput', 'video', (id) => {
+    addSelect(labels.camera, 'videoinput', 'video', (id) => {
       room?.switchDevice('videoinput', id).catch(reportError);
     });
   }
@@ -1285,7 +1303,9 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
           ? labels.camOn
           : id === 'share'
             ? labels.share
-            : labels[id];
+            : id === 'layout'
+              ? layoutTip(layoutMode)
+              : labels[id];
     const b = makeButton(id, text, actions[id]);
     buttons.set(id, b);
     bar.appendChild(b);

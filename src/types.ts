@@ -224,12 +224,23 @@ export interface KapiUiLabels {
   hangup?: string;
   /** Overflow ("⋯") button that holds toolbar controls that don't fit. */
   more?: string;
-  /** Toolbar view-cycle button tooltip. */
+  /** Toolbar view-cycle button tooltip (legacy static text — kept when the
+   *  host sets it while leaving the per-view labels untouched). */
   layout?: string;
+  /** Layout-button tooltips per current view — the tooltip tracks the view
+   *  the button switched to instead of staying stuck on the initial one. */
+  layoutGrid?: string;
+  layoutSpotlight?: string;
+  layoutSidebar?: string;
   /** Click-to-pin tile tooltip (pinned tiles win the spotlight/sidebar stage). */
   pin?: string;
   /** Tooltip of an already-pinned tile. */
   unpin?: string;
+  /** Settings-panel select titles. */
+  microphone?: string;
+  camera?: string;
+  /** Aria label for the muted-mic chip (tile + participant roster). */
+  muted?: string;
   you?: string;
   enableSound?: string;
   /** Tooltip / roster label for excellent link quality. */

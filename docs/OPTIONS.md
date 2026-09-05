@@ -107,8 +107,11 @@ may renegotiate peers.
     tileBg?: string
     toolbarBg?: string
   }
-  labels?: Record<string, string>  // see DEFAULT_LABELS — incl. layout / pin / unpin /
-                                   // more / connectionExcellent|Good|Poor|Lost|Unknown
+  labels?: Record<string, string>  // see DEFAULT_LABELS — incl. layout /
+                                   // layoutGrid|Spotlight|Sidebar (tooltip tracks
+                                   // the current view) / pin / unpin / more /
+                                   // microphone / camera / muted /
+                                   // connectionExcellent|Good|Poor|Lost|Unknown
   videoFit?: 'contain' | 'cover'  // default 'contain' — full frame, true aspect
                                   // ratio. 'cover' fills the tile and crops
                                   // overflow. Screen shares always use
