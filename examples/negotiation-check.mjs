@@ -425,4 +425,29 @@ assert(eventsA.errors.length === 0, 'A stayed error-free');
   capped.close();
   console.log('ok: adaptive video rungs, receiver hints, share profile, bitrate cap');
 }
+// A throwing signal adapter (socket already closed, HTTP hiccup) must never
+// wedge teardown: sends route through a guard that surfaces an 'error' event,
+// and hangup() completes instead of aborting mid-cleanup.
+{
+  const throwing = {
+    send(msg) {
+      if (msg.type === 'leave') throw new Error('socket closed');
+    },
+    onMessage() {
+      return () => {};
+    },
+  };
+  const roomT = await KapiRoom.join({ roomId: 't', peerId: 't-throw', signal: throwing });
+  const tErrors = [];
+  roomT.on('error', ({ error }) => tErrors.push(error.message));
+  await roomT.hangup(); // must not reject
+  assert(roomT.localMedia === null, 'hangup completed despite throwing adapter');
+  assert(
+    tErrors.some((m) => m.includes('socket closed')),
+    `adapter send failure surfaced as error event (got ${tErrors.join('; ')})`,
+  );
+  await roomT.hangup(); // idempotent
+  console.log('ok: throwing signal adapter cannot break hangup');
+}
+
 console.log('ok: negotiation, tracks, rejoin, reactions, hangup, mid-offer hangup');

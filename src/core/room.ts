@@ -88,6 +88,20 @@ export class KapiRoom {
     return () => this.listeners.get(event)?.delete(handler as Handler<RoomEvent>);
   }
 
+  /**
+   * The signal adapter is host code at a trust boundary. Routing every send
+   * through here means a throwing send() (socket already closed, HTTP hiccup)
+   * surfaces as a recoverable 'error' event instead of wedging negotiation —
+   * and, critically, can never abort hangup() mid-teardown and leak tracks.
+   */
+  private signalSend(msg: SignalMessage) {
+    try {
+      this.options.signal.send(msg);
+    } catch (err) {
+      this.emit('error', { error: err instanceof Error ? err : new Error(String(err)) });
+    }
+  }
+
   private emit<E extends RoomEvent>(event: E, payload: RoomEventMap[E]) {
     // Snapshot: a handler that unsubscribes itself must not skip the next one.
     const handlers = this.listeners.get(event);
@@ -209,7 +223,7 @@ export class KapiRoom {
   /** Send room join (roster / presence). Safe to call once after wiring events. */
   announce() {
     if (this.closed) return;
-    this.options.signal.send({
+    this.signalSend({
       type: 'join',
       peerId: this.options.peerId,
       displayName: this.options.displayName,
@@ -258,7 +272,7 @@ export class KapiRoom {
 
     peer = new KapiPeer(remoteId, this.options.iceServers!, this.isPoliteToward(remoteId), {
       onIce: (candidate) =>
-        this.options.signal.send({
+        this.signalSend({
           type: 'ice',
           candidate,
           to: remoteId,
@@ -396,7 +410,7 @@ export class KapiRoom {
     try {
       const sdp = await peer.createAndSetOffer(iceRestart);
       if (this.closed || !this.peers.has(remoteId)) return;
-      this.options.signal.send({
+      this.signalSend({
         type: 'offer',
         sdp,
         to: remoteId,
@@ -466,7 +480,7 @@ export class KapiRoom {
           // hangup() may land mid-answer — sending it would connect the
           // remote to a hung-up tab (zombie participant).
           if (answer && !this.closed) {
-            this.options.signal.send({
+            this.signalSend({
               type: 'answer',
               sdp: answer,
               to: from,
@@ -746,7 +760,7 @@ export class KapiRoom {
     const sharing = !!this.screenStream;
     const mic = this.micEnabled;
     const cam = this.camEnabled;
-    this.options.signal.send({
+    this.signalSend({
       type: 'media-state',
       peerId: this.options.peerId,
       sharing,
@@ -766,7 +780,7 @@ export class KapiRoom {
    */
   sendVideoHint(toPeerId: string, width: number, height: number) {
     if (this.closed || !this.options.adaptive) return;
-    this.options.signal.send({
+    this.signalSend({
       type: 'video-hint',
       to: toPeerId,
       from: this.options.peerId,
@@ -869,7 +883,7 @@ export class KapiRoom {
     if (this.closed) return;
     const clean = typeof emoji === 'string' ? emoji.trim() : '';
     if (!clean || clean.length > 24) return;
-    this.options.signal.send({
+    this.signalSend({
       type: 'reaction',
       emoji: clean,
       from: this.options.peerId,
@@ -952,7 +966,7 @@ export class KapiRoom {
       window.removeEventListener('pagehide', this.onPageUnload);
       window.removeEventListener('beforeunload', this.onPageUnload);
     }
-    this.options.signal.send({ type: 'leave', peerId: this.options.peerId });
+    this.signalSend({ type: 'leave', peerId: this.options.peerId });
     this.unsubSignal?.();
     this.unsubSignal = null;
     if (this.qualityTimer !== null) {
