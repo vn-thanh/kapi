@@ -191,6 +191,7 @@ Full payloads: [docs/OPTIONS.md](docs/OPTIONS.md#room-events-roomonevent-handler
 | `sidebar` | Stage + right-hand filmstrip column |
 
 - **Pin any tile** by clicking it — the stage follows your pin; unpin to return to active-speaker mode
+- **Keyboard shortcuts** — `M` mutes, `V` toggles the camera (Jitsi-style; opt out with `shortcuts: false`)
 - **Screen share always wins the stage**, rendered uncropped (`contain`) so shared content stays readable
 - **Theme with CSS variables** — `theme: { accent: '#e11d48', bg: '#0b0f14', … }`
 - **Labels** are fully overridable (`labels: { hangup: 'Rời cuộc gọi', … }`)

@@ -117,6 +117,10 @@ may renegotiate peers.
     // default 'bars' when room connectionQuality is on, else 'dot'.
     // 'bars' = Zoom/Meet-style signal strength; 'dot' = PC-state only;
     // 'off' hides the indicator.
+  shortcuts?: boolean      // default true — in-call keyboard shortcuts,
+                           // Jitsi-style: M toggles mic, V toggles camera.
+                           // Scoped to the mounted UI and ignored while a
+                           // form control has focus.
   onHangup?: () => void
   onReady?: (room: KapiRoom) => void
   onError?: (error: Error) => void
@@ -126,6 +130,8 @@ may renegotiate peers.
 ### Built-in layout interactions
 
 - **View button** (toolbar `'layout'`) cycles `grid → spotlight → sidebar`.
+- **Keyboard shortcuts** (`shortcuts`, default on): `M` toggles the mic, `V`
+  toggles the camera — Jitsi-style, scoped to the mounted UI.
 - **Narrow toolbar**: controls that don't fit move into a ⋯ More menu
   (mic, camera and hangup stay on the bar). Override the label with
   `labels.more`.

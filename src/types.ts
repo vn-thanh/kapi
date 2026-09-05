@@ -260,6 +260,13 @@ export interface KapiMountOptions extends KapiRoomOptions {
    * `'off'` hides the indicator entirely.
    */
   connectionQualityUi?: KapiConnectionQualityUi;
+  /**
+   * In-call keyboard shortcuts, Jitsi-style: `M` toggles the mic, `V` toggles
+   * the camera. Listened for inside the mounted UI only (host-page keys are
+   * never hijacked) and ignored while an input/select has focus.
+   * Default true.
+   */
+  shortcuts?: boolean;
   onHangup?: () => void;
   onReady?: (room: import('./core/room').KapiRoom) => void;
   onError?: (error: Error) => void;

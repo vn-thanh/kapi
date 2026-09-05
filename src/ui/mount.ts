@@ -1288,6 +1288,27 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   layoutToolbar();
   toolbarRo.observe(root);
 
+  // In-call keyboard shortcuts (Jitsi-style): M mute, V camera. Scoped to
+  // the mounted root so host-page shortcuts are never hijacked, and ignored
+  // while a form control has focus (typing in settings must not mute you).
+  if (options.shortcuts !== false) {
+    const onShortcut = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target;
+      if (t instanceof HTMLElement && t.closest('input, textarea, select, [contenteditable]')) {
+        return;
+      }
+      const key = e.key.toLowerCase();
+      if (key === 'm') actions.mic();
+      else if (key === 'v') actions.cam();
+      else return;
+      // A keypress is a user gesture — count it toward audio autoplay too.
+      unlockSound();
+    };
+    root.addEventListener('keydown', onShortcut);
+    unsubs.push(() => root.removeEventListener('keydown', onShortcut));
+  }
+
   // Wire UI events before announce so a sync `peers` roster is not missed.
   void KapiRoom.join({ ...options, autoJoin: false })
     .then((r) => {
