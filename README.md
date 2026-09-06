@@ -341,6 +341,8 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
 3. Merging that PR tags the repo and publishes the **GitHub Release**
 4. The `publish` workflow then runs `npm run check` and publishes to **npm** (requires the `NPM_TOKEN` repository secret)
 
+Release PRs and GitHub Releases are authored as **Thanh Vu** via the `RELEASE_PLEASE_TOKEN` secret (a PAT from `vn-thanh`, not the default `GITHUB_TOKEN`).
+
 No manual version bumps, no manual changelogs.
 
 **CI unavailable?** Publish from this machine instead (npm must be logged in — `npm whoami`):

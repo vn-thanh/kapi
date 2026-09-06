@@ -3,6 +3,10 @@
 # Flow: commit with Conventional Commits (feat:/fix:/…) → this workflow opens
 # or updates a Release PR → merging it creates the version tag + GitHub Release.
 # The publish workflow then takes over (npm publish).
+#
+# RELEASE_PLEASE_TOKEN must be a PAT owned by vn-thanh (Thanh Vu) with
+# contents + pull-requests write, so Release PRs / tags / GitHub Releases are
+# attributed to Thanh Vu — not github-actions[bot].
 
 name: Release Please
 
@@ -20,5 +24,6 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
