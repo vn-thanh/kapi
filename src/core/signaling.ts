@@ -33,6 +33,14 @@ export function createLocalSignalBus(): {
             }
           }
           if (msg.type === 'leave') roster.delete(msg.peerId);
+          if (msg.type === 'peer-meta') {
+            const prev = roster.get(msg.peerId) ?? {};
+            roster.set(msg.peerId, {
+              displayName:
+                msg.displayName !== undefined ? msg.displayName : prev.displayName,
+              avatarUrl: 'avatarUrl' in msg ? msg.avatarUrl : prev.avatarUrl,
+            });
+          }
 
           if ('to' in withFrom && withFrom.to) {
             listeners.get(withFrom.to)?.forEach((fn) => fn(withFrom));
@@ -97,6 +105,14 @@ export function createBroadcastSignalAdapter(
       }
     } else if (msg.type === 'leave') {
       roster.delete(msg.peerId);
+    } else if (msg.type === 'peer-meta') {
+      const prev = roster.get(msg.peerId) ?? {};
+      const next = {
+        displayName: msg.displayName !== undefined ? msg.displayName : prev.displayName,
+        avatarUrl: 'avatarUrl' in msg ? msg.avatarUrl : prev.avatarUrl,
+      };
+      roster.set(msg.peerId, next);
+      if (msg.peerId === peerId) myMeta = next;
     }
 
     const { _from, _to, ...rest } = msg as SignalMessage & { _from?: string; _to?: string };

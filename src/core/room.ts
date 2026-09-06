@@ -30,6 +30,9 @@ export class KapiRoom {
   private closed = false;
   private micEnabled = false;
   private camEnabled = false;
+  /** Last `switchDevice` picks — reused when cam/mic is re-acquired after stop. */
+  private preferredAudioDeviceId: string | undefined;
+  private preferredVideoDeviceId: string | undefined;
   /** Serialize signal handling so ICE cannot race ahead of offer/answer. */
   private signalChain: Promise<void> = Promise.resolve();
   /** Negotiations skipped while a peer was mid-offer — flushed on `stable`. */
@@ -148,10 +151,12 @@ export class KapiRoom {
             : media.audio === undefined || media.audio === true
               ? true
               : media.audio;
+      // Camera off never keeps a live track (LED / black frames). Skip
+      // getUserMedia for video until setCam(true), even with acquire:'join'.
       const videoConstraint: boolean | MediaTrackConstraints =
         media.video === false
           ? false
-          : acquire === 'on-enable' && !this.camEnabled
+          : !this.camEnabled
             ? false
             : media.video === undefined || media.video === true
               ? DEFAULT_VIDEO
@@ -163,11 +168,18 @@ export class KapiRoom {
       });
       this.localStream = this.rawCameraStream;
       this.applyMicState();
-      this.applyCamState();
+      // Belt-and-suspenders if a host somehow supplied a live video track.
+      if (!this.camEnabled) {
+        await this.unpublishCameraVideo();
+      }
 
       const bg = this.options.effects?.background ?? 'none';
       this.currentBackground = bg === undefined ? 'none' : bg;
-      if (bg !== 'none' && this.rawCameraStream.getVideoTracks().length > 0) {
+      if (
+        this.camEnabled &&
+        bg !== 'none' &&
+        this.rawCameraStream.getVideoTracks().length > 0
+      ) {
         // A broken effect (offline CDN, dead model URL) must not block joining.
         try {
           await this.setBackground(bg);
@@ -238,13 +250,17 @@ export class KapiRoom {
 
   private mergePeerMeta(
     remoteId: string,
-    meta?: Pick<SignalPeer, 'displayName' | 'avatarUrl'>,
+    meta?: Pick<SignalPeer, 'displayName' | 'avatarUrl'> & { avatarUrl?: string },
   ): SignalPeer {
     const prev = this.peerMeta.get(remoteId);
     const next: SignalPeer = {
       peerId: remoteId,
-      displayName: meta?.displayName ?? prev?.displayName,
-      avatarUrl: meta?.avatarUrl ?? prev?.avatarUrl,
+      displayName:
+        meta?.displayName !== undefined ? meta.displayName : prev?.displayName,
+      avatarUrl:
+        meta && 'avatarUrl' in meta
+          ? meta.avatarUrl?.trim() || undefined
+          : prev?.avatarUrl,
     };
     this.peerMeta.set(remoteId, next);
     return next;
@@ -328,6 +344,9 @@ export class KapiRoom {
     });
 
     if (this.localStream) await peer.addLocalTracks(this.localStream);
+    // Late joiners while we are already sharing: attach tab/system audio too.
+    const shareAudio = this.screenShareAudioTrack();
+    if (shareAudio) await peer.setShareAudioTrack(shareAudio);
     // hangup() can land while tracks were attaching — close the fresh
     // connection instead of re-populating peers on a dead room.
     if (this.closed) {
@@ -529,11 +548,28 @@ export class KapiRoom {
           if (msg.peerId === this.options.peerId) return;
           const mic = typeof msg.mic === 'boolean' ? msg.mic : undefined;
           const cam = typeof msg.cam === 'boolean' ? msg.cam : undefined;
+          const shareAudio = typeof msg.shareAudio === 'boolean' ? msg.shareAudio : undefined;
           this.emit('media-state', {
             peerId: msg.peerId,
             sharing: msg.sharing,
             ...(mic !== undefined ? { mic } : {}),
             ...(cam !== undefined ? { cam } : {}),
+            ...(shareAudio !== undefined ? { shareAudio } : {}),
+          });
+          break;
+        }
+        case 'peer-meta': {
+          if (typeof msg.peerId !== 'string') return;
+          if (msg.peerId === this.options.peerId) return;
+          const displayName =
+            typeof msg.displayName === 'string' ? msg.displayName : undefined;
+          const avatarUrl = typeof msg.avatarUrl === 'string' ? msg.avatarUrl : undefined;
+          if (displayName === undefined && avatarUrl === undefined) return;
+          this.mergePeerMeta(msg.peerId, { displayName, avatarUrl });
+          this.emit('peer-meta', {
+            peerId: msg.peerId,
+            ...(displayName !== undefined ? { displayName } : {}),
+            ...(avatarUrl !== undefined ? { avatarUrl } : {}),
           });
           break;
         }
@@ -563,36 +599,80 @@ export class KapiRoom {
     if (enabled) {
       try {
         await this.ensureLocalKind('video');
+        await this.publishCameraVideo();
       } catch (err) {
         this.camEnabled = false;
         this.emit('error', { error: err instanceof Error ? err : new Error(String(err)) });
         return;
       }
+    } else {
+      await this.unpublishCameraVideo();
     }
-    this.applyCamState();
     this.broadcastMediaState();
   }
 
   private applyMicState() {
-    for (const t of this.localStream?.getAudioTracks() ?? []) t.enabled = this.micEnabled;
+    // Only mic tracks — never the screen-share audio track on screenStream.
     for (const t of this.rawCameraStream?.getAudioTracks() ?? []) t.enabled = this.micEnabled;
+    for (const t of this.localStream?.getAudioTracks() ?? []) {
+      if (this.screenStream?.getAudioTracks().includes(t)) continue;
+      t.enabled = this.micEnabled;
+    }
   }
 
   /**
-   * Toggle camera-origin video tracks only. While screen sharing the sent
-   * video is the screen track and must NOT be touched — previously toggling
-   * the camera also froze the shared screen because localStream carried it.
+   * While screen sharing the sent video is the screen track and must NOT be
+   * touched — previously toggling the camera also froze the shared screen
+   * because localStream carried it.
    */
   private applyCamState() {
-    if (this.screenStream) return;
+    if (this.screenStream || !this.camEnabled) return;
     const seen = new Set<MediaStreamTrack>();
     for (const t of this.localStream?.getVideoTracks() ?? []) {
-      t.enabled = this.camEnabled;
+      t.enabled = true;
       seen.add(t);
     }
     for (const t of this.rawCameraStream?.getVideoTracks() ?? []) {
-      if (!seen.has(t)) t.enabled = this.camEnabled;
+      if (!seen.has(t)) t.enabled = true;
     }
+  }
+
+  /**
+   * Stop sending camera video and release the capture track (LED off). Screen
+   * share outbound video is left alone; raw camera tracks are still stopped.
+   */
+  private async unpublishCameraVideo() {
+    if (this.closed) return;
+    if (this.background) {
+      this.background.stop();
+      this.background = null;
+    }
+    if (!this.screenStream) {
+      await this.replaceVideoTrack(null);
+    }
+    for (const stream of [this.rawCameraStream, this.localStream]) {
+      if (!stream) continue;
+      for (const t of stream.getVideoTracks()) {
+        stream.removeTrack(t);
+        t.stop();
+      }
+    }
+    if (!this.screenStream) {
+      this.localStream = this.rawCameraStream;
+      if (this.localStream) this.emit('local-stream', { stream: this.localStream });
+    }
+  }
+
+  /** Push the live camera (or background-processed) track to peers. */
+  private async publishCameraVideo() {
+    if (this.closed || this.screenStream) return;
+    if (this.currentBackground !== 'none') {
+      await this.setBackground(this.currentBackground);
+      return;
+    }
+    const cam = this.rawCameraStream?.getVideoTracks()[0] ?? null;
+    if (cam) cam.enabled = true;
+    await this.replaceVideoTrack(cam);
   }
 
   /**
@@ -612,19 +692,36 @@ export class KapiRoom {
         : this.rawCameraStream?.getVideoTracks().find((t) => t.readyState === 'live');
     if (live) return;
 
+    const baseAudio =
+      media.audio === undefined || media.audio === true ? true : media.audio;
+    const baseVideo =
+      media.video === undefined || media.video === true ? DEFAULT_VIDEO : media.video;
+
     const constraints =
       kind === 'audio'
         ? {
             audio:
-              media.audio === undefined || media.audio === true ? true : media.audio,
+              typeof baseAudio === 'object' || this.preferredAudioDeviceId
+                ? {
+                    ...(typeof baseAudio === 'object' ? baseAudio : {}),
+                    ...(this.preferredAudioDeviceId
+                      ? { deviceId: { exact: this.preferredAudioDeviceId } }
+                      : {}),
+                  }
+                : baseAudio,
             video: false as const,
           }
         : {
             audio: false as const,
             video:
-              media.video === undefined || media.video === true
-                ? DEFAULT_VIDEO
-                : media.video,
+              typeof baseVideo === 'object' || this.preferredVideoDeviceId
+                ? {
+                    ...(typeof baseVideo === 'object' ? baseVideo : {}),
+                    ...(this.preferredVideoDeviceId
+                      ? { deviceId: { exact: this.preferredVideoDeviceId } }
+                      : {}),
+                  }
+                : baseVideo,
           };
 
     const stream = await getLocalStream(constraints);
@@ -654,6 +751,8 @@ export class KapiRoom {
       for (const target of targets) {
         for (const old of target.getAudioTracks()) {
           if (old === track) continue;
+          // Never steal / stop the screen-share audio track.
+          if (this.screenStream?.getAudioTracks().includes(old)) continue;
           target.removeTrack(old);
           old.stop();
         }
@@ -667,7 +766,8 @@ export class KapiRoom {
       return;
     }
 
-    // Video: respect background / screen-share paths.
+    // Video: respect background / screen-share paths. Caller (setCam /
+    // publishCameraVideo) finishes attaching outbound video.
     track.enabled = this.camEnabled;
     if (this.currentBackground !== 'none' && !this.screenStream) {
       await this.setBackground(this.currentBackground);
@@ -699,6 +799,23 @@ export class KapiRoom {
     return !!this.screenStream;
   }
 
+  /** Whether the active screen share includes a live tab/system audio track. */
+  get sharingAudio() {
+    return !!this.screenShareAudioTrack();
+  }
+
+  private screenShareAudioTrack(): MediaStreamTrack | null {
+    return (
+      this.screenStream?.getAudioTracks().find((t) => t.readyState === 'live') ?? null
+    );
+  }
+
+  private async replaceShareAudioTrack(track: MediaStreamTrack | null) {
+    for (const [id, peer] of this.peers) {
+      if (await peer.setShareAudioTrack(track)) await this.negotiate(id);
+    }
+  }
+
   async shareScreen(enabled: boolean) {
     if (this.closed) return;
     if (enabled) {
@@ -717,20 +834,25 @@ export class KapiRoom {
       // Prefer quality for text/UI on shared screens
       if ('contentHint' in track) track.contentHint = 'detail';
       this.screenStream = stream;
-      // Browser UI "stop sharing": shareScreen(false) can reject (camera
-      // restore hits a broken effect/CDN) — surface it, never drop it.
-      track.onended = () => {
+      // Browser UI "Stop sharing" ends the video track; audio may end
+      // independently — either one should tear the share down.
+      const endShare = () => {
         void this.shareScreen(false).catch((err) => {
           this.emit('error', { error: err instanceof Error ? err : new Error(String(err)) });
         });
       };
+      track.onended = endShare;
+      for (const a of stream.getAudioTracks()) a.onended = endShare;
       try {
         await this.replaceVideoTrack(track);
+        await this.replaceShareAudioTrack(this.screenShareAudioTrack());
       } catch (err) {
         // Never straddle "sharing in state, camera on the wire" — roll back.
         track.onended = null;
+        for (const a of stream.getAudioTracks()) a.onended = null;
         this.screenStream = null;
         stream.getTracks().forEach((t) => t.stop());
+        await this.replaceShareAudioTrack(null);
         await this.restoreCameraTrack();
         throw err;
       }
@@ -747,8 +869,36 @@ export class KapiRoom {
       t.onended = null;
       t.stop();
     }
+    await this.replaceShareAudioTrack(null);
     await this.restoreCameraTrack();
     this.broadcastMediaState();
+  }
+
+  /**
+   * Update this peer's display name and/or avatar URL and broadcast to the
+   * room. Omitted fields keep their previous value; pass an empty string to
+   * clear `avatarUrl`.
+   */
+  setIdentity(identity: { displayName?: string; avatarUrl?: string }) {
+    if (this.closed) return;
+    if (identity.displayName !== undefined) {
+      const name = identity.displayName.trim();
+      this.options.displayName = name || this.options.peerId;
+    }
+    if (identity.avatarUrl !== undefined) {
+      this.options.avatarUrl = identity.avatarUrl.trim() || undefined;
+    }
+    this.signalSend({
+      type: 'peer-meta',
+      peerId: this.options.peerId,
+      displayName: this.options.displayName,
+      avatarUrl: this.options.avatarUrl,
+    });
+    this.emit('peer-meta', {
+      peerId: this.options.peerId,
+      displayName: this.options.displayName,
+      avatarUrl: this.options.avatarUrl,
+    });
   }
 
   /** Broadcast mic/cam/share state (and fire `media-state` locally) so remote
@@ -760,16 +910,24 @@ export class KapiRoom {
     const sharing = !!this.screenStream;
     const mic = this.micEnabled;
     const cam = this.camEnabled;
+    const shareAudio = !!this.screenShareAudioTrack();
     this.signalSend({
       type: 'media-state',
       peerId: this.options.peerId,
       sharing,
       mic,
       cam,
+      shareAudio,
       ...(to ? { to } : {}),
     });
     if (!to) {
-      this.emit('media-state', { peerId: this.options.peerId, sharing, mic, cam });
+      this.emit('media-state', {
+        peerId: this.options.peerId,
+        sharing,
+        mic,
+        cam,
+        shareAudio,
+      });
     }
   }
 
@@ -791,6 +949,10 @@ export class KapiRoom {
 
   private async restoreCameraTrack() {
     if (this.closed) return;
+    if (!this.camEnabled) {
+      await this.unpublishCameraVideo();
+      return;
+    }
     if (this.currentBackground !== 'none') {
       await this.setBackground(this.currentBackground);
     } else {
@@ -834,7 +996,10 @@ export class KapiRoom {
     // No camera → getLocalStream fell back to audio-only/empty. There is no
     // video to composite a background onto; changing modes would just spin up
     // a segmenter that waits 3s for dimensions that never arrive.
-    if (this.rawCameraStream.getVideoTracks().length === 0) return;
+    if (this.rawCameraStream.getVideoTracks().length === 0) {
+      this.currentBackground = mode;
+      return;
+    }
     const seq = ++this.backgroundSeq;
     this.currentBackground = mode;
 
@@ -843,13 +1008,14 @@ export class KapiRoom {
       this.background = null;
       this.localStream = this.rawCameraStream;
       const v = this.rawCameraStream.getVideoTracks()[0] ?? null;
-      if (!this.screenStream) await this.replaceVideoTrack(v);
+      if (!this.screenStream && this.camEnabled) await this.replaceVideoTrack(v);
+      else if (!this.screenStream && !this.camEnabled) await this.replaceVideoTrack(null);
       this.applyCamState();
       this.emit('local-stream', { stream: this.localStream });
       return;
     }
 
-    // ponytail: single main-thread segmenter; upgrade to worker if CPU-bound
+    // Prefer a Worker for MediaPipe when available; falls back to main thread.
     if (!this.background) {
       this.background = new BackgroundProcessor({
         modelUrl: this.options.effects?.modelUrl,
@@ -865,7 +1031,7 @@ export class KapiRoom {
       return;
     }
     this.localStream = processed;
-    if (!this.screenStream) {
+    if (!this.screenStream && this.camEnabled) {
       const v = processed.getVideoTracks()[0] ?? null;
       await this.replaceVideoTrack(v);
     }
@@ -894,6 +1060,7 @@ export class KapiRoom {
   async switchDevice(kind: 'audioinput' | 'videoinput', deviceId: string) {
     if (this.closed) return;
     if (kind === 'audioinput') {
+      this.preferredAudioDeviceId = deviceId;
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { deviceId: { exact: deviceId } },
         video: false,
@@ -918,6 +1085,7 @@ export class KapiRoom {
       for (const target of targets) {
         for (const old of target.getAudioTracks()) {
           if (old === track) continue;
+          if (this.screenStream?.getAudioTracks().includes(old)) continue;
           target.removeTrack(old);
           old.stop();
         }
@@ -928,6 +1096,7 @@ export class KapiRoom {
       return;
     }
 
+    this.preferredVideoDeviceId = deviceId;
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { deviceId: { exact: deviceId } },
       audio: false,
@@ -938,9 +1107,6 @@ export class KapiRoom {
     }
     const track = stream.getVideoTracks()[0];
     if (!track) return;
-    // Respect the camera toggle — a fresh track defaults to enabled=true and
-    // would silently turn the camera back on while the UI shows it off.
-    track.enabled = this.camEnabled;
     if (this.rawCameraStream) {
       const old = this.rawCameraStream.getVideoTracks()[0];
       if (old) {
@@ -948,6 +1114,13 @@ export class KapiRoom {
         old.stop();
       }
       this.rawCameraStream.addTrack(track);
+    } else {
+      this.rawCameraStream = new MediaStream([track]);
+    }
+    if (!this.camEnabled) {
+      // Keep the preferred device id; release the live track so the LED stays off.
+      await this.unpublishCameraVideo();
+      return;
     }
     if (this.currentBackground !== 'none') {
       await this.setBackground(this.currentBackground);
