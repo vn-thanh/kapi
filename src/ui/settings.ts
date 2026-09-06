@@ -28,7 +28,7 @@ export type SettingsPanelCallbacks = {
   onVideoFit: (fit: 'contain' | 'cover') => void;
   onShortcuts: (on: boolean) => void;
   onError: (err: unknown) => void;
-  onClose: () => void;
+  onClose?: () => void;
 };
 
 export type SettingsPanel = {
@@ -50,6 +50,18 @@ function currentTrackDevice(stream: MediaStream | null, kind: 'audio' | 'video')
     ?.getTracks()
     .find((t) => t.kind === kind && t.readyState === 'live')
     ?.getSettings().deviceId;
+}
+
+function setChipActive(el: Element, on: boolean) {
+  el.classList.toggle('is-active', on);
+  el.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
+function markChipGroup(row: HTMLElement, active: Element | null, match?: (el: HTMLElement) => boolean) {
+  for (const x of row.querySelectorAll('.kapi-settings-chip')) {
+    const on = match ? match(x as HTMLElement) : x === active;
+    setChipActive(x, on);
+  }
 }
 
 /**
@@ -104,7 +116,7 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
         '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
       closeBtn.addEventListener('click', () => {
         close();
-        cb.onClose();
+        cb.onClose?.();
       });
       header.append(title, closeBtn);
       el.appendChild(header);
@@ -210,6 +222,38 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
         panel.appendChild(p);
       };
 
+      const addSegment = <T extends string>(
+        panel: HTMLElement,
+        label: string,
+        choices: { id: T; label: string }[],
+        selected: T,
+        onPick: (id: T) => void,
+      ) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'kapi-settings-field';
+        const caption = document.createElement('span');
+        caption.className = 'kapi-device-label';
+        caption.textContent = label;
+        const row = document.createElement('div');
+        row.className = 'kapi-settings-segment';
+        row.setAttribute('role', 'group');
+        row.setAttribute('aria-label', label);
+        for (const choice of choices) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'kapi-settings-chip';
+          b.textContent = choice.label;
+          setChipActive(b, selected === choice.id);
+          b.addEventListener('click', () => {
+            onPick(choice.id);
+            markChipGroup(row, b);
+          });
+          row.appendChild(b);
+        }
+        wrap.append(caption, row);
+        panel.appendChild(wrap);
+      };
+
       // ---- Audio ----
       const audioPane = panels.get('audio')!;
       addSelect(
@@ -247,38 +291,16 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
           cb.onDevicePick('videoinput', id);
         },
       );
-
-      const fitWrap = document.createElement('div');
-      fitWrap.className = 'kapi-settings-field';
-      const fitLabel = document.createElement('span');
-      fitLabel.className = 'kapi-device-label';
-      fitLabel.textContent = cb.labels.videoFit;
-      const fitRow = document.createElement('div');
-      fitRow.className = 'kapi-settings-segment';
-      fitRow.setAttribute('role', 'group');
-      fitRow.setAttribute('aria-label', cb.labels.videoFit);
-      for (const fit of [
-        { id: 'contain' as const, label: cb.labels.videoFitContain },
-        { id: 'cover' as const, label: cb.labels.videoFitCover },
-      ]) {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'kapi-settings-chip';
-        b.textContent = fit.label;
-        b.setAttribute('aria-pressed', cb.getVideoFit() === fit.id ? 'true' : 'false');
-        b.classList.toggle('is-active', cb.getVideoFit() === fit.id);
-        b.addEventListener('click', () => {
-          cb.onVideoFit(fit.id);
-          for (const x of fitRow.querySelectorAll('.kapi-settings-chip')) {
-            const on = x === b;
-            x.classList.toggle('is-active', on);
-            x.setAttribute('aria-pressed', on ? 'true' : 'false');
-          }
-        });
-        fitRow.appendChild(b);
-      }
-      fitWrap.append(fitLabel, fitRow);
-      videoPane.appendChild(fitWrap);
+      addSegment(
+        videoPane,
+        cb.labels.videoFit,
+        [
+          { id: 'contain' as const, label: cb.labels.videoFitContain },
+          { id: 'cover' as const, label: cb.labels.videoFitCover },
+        ],
+        cb.getVideoFit(),
+        (fit) => cb.onVideoFit(fit),
+      );
 
       // ---- Effects ----
       const effectsPane = panels.get('effects')!;
@@ -296,78 +318,64 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
       const activeBg = typeof bgMode === 'string' ? bgMode : 'image';
       const effectsAllowed = cb.getBackgroundEffectsAllowed?.() ?? true;
 
-      const bgChoices: { id: string; label: string; apply: () => void }[] = [
-        { id: 'none', label: cb.labels.bgNone, apply: () => cb.onBackground('none') },
-        { id: 'blur', label: cb.labels.bgBlur, apply: () => cb.onBackground('blur') },
-        { id: 'remove', label: cb.labels.bgRemove, apply: () => cb.onBackground('remove') },
-      ];
+      const blurField = document.createElement('label');
+      blurField.className = 'kapi-settings-field kapi-device';
+      blurField.hidden = activeBg !== 'blur' || !effectsAllowed;
 
-      for (const choice of bgChoices) {
+      const paintBgChips = (id: string) => {
+        markChipGroup(bgRow, null, (x) => x.dataset.bg === id);
+        blurField.hidden = id !== 'blur' || !effectsAllowed;
+      };
+
+      const addBgChip = (
+        id: string,
+        label: string,
+        onClick: () => void,
+        opts?: { paintOnClick?: boolean },
+      ) => {
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'kapi-settings-chip';
-        b.dataset.bg = choice.id;
-        b.textContent = choice.label;
-        b.classList.toggle('is-active', activeBg === choice.id);
-        b.setAttribute('aria-pressed', activeBg === choice.id ? 'true' : 'false');
-        const heavy = choice.id !== 'none';
+        b.dataset.bg = id;
+        b.textContent = label;
+        setChipActive(b, activeBg === id);
+        const heavy = id !== 'none';
         if (heavy && !effectsAllowed) {
           b.disabled = true;
           b.title = cb.labels.bgUnsupported;
         }
         b.addEventListener('click', () => {
           if (heavy && !effectsAllowed) return;
-          choice.apply();
-          for (const x of bgRow.querySelectorAll('.kapi-settings-chip')) {
-            const on = (x as HTMLElement).dataset.bg === choice.id;
-            x.classList.toggle('is-active', on);
-            x.setAttribute('aria-pressed', on ? 'true' : 'false');
-          }
-          blurField.hidden = choice.id !== 'blur';
+          onClick();
+          if (opts?.paintOnClick !== false) paintBgChips(id);
         });
         bgRow.appendChild(b);
-      }
+        return b;
+      };
 
-      const imgBtn = document.createElement('button');
-      imgBtn.type = 'button';
-      imgBtn.className = 'kapi-settings-chip';
-      imgBtn.dataset.bg = 'image';
-      imgBtn.textContent = cb.labels.bgImage;
-      imgBtn.classList.toggle('is-active', activeBg === 'image');
-      imgBtn.setAttribute('aria-pressed', activeBg === 'image' ? 'true' : 'false');
-      if (!effectsAllowed) {
-        imgBtn.disabled = true;
-        imgBtn.title = cb.labels.bgUnsupported;
-      }
+      addBgChip('none', cb.labels.bgNone, () => cb.onBackground('none'));
+      addBgChip('blur', cb.labels.bgBlur, () => cb.onBackground('blur'));
+      addBgChip('remove', cb.labels.bgRemove, () => cb.onBackground('remove'));
+
       const file = document.createElement('input');
       file.type = 'file';
       file.accept = 'image/*';
       file.hidden = true;
-      imgBtn.addEventListener('click', () => {
-        if (!effectsAllowed) return;
-        file.click();
-      });
+      // Activate only after a file is chosen (cancel leaves the prior mode).
+      addBgChip('image', cb.labels.bgImage, () => file.click(), { paintOnClick: false });
       file.addEventListener('change', () => {
         const f = file.files?.[0];
         file.value = '';
         if (!f) return;
         cb.onBackgroundImage(f);
-        for (const x of bgRow.querySelectorAll('.kapi-settings-chip')) {
-          const on = (x as HTMLElement).dataset.bg === 'image';
-          x.classList.toggle('is-active', on);
-          x.setAttribute('aria-pressed', on ? 'true' : 'false');
-        }
-        blurField.hidden = true;
+        paintBgChips('image');
       });
-      bgRow.append(imgBtn, file);
+      bgRow.append(file);
       effectsPane.appendChild(bgRow);
       if (!effectsAllowed) {
         addHint(effectsPane, cb.labels.bgUnsupported);
       }
 
-      const blurField = document.createElement('label');
-      blurField.className = 'kapi-settings-field kapi-device';
-      blurField.hidden = activeBg !== 'blur' || !effectsAllowed;
       const blurCaption = document.createElement('span');
       blurCaption.className = 'kapi-device-label';
       const blurValue = document.createElement('span');
@@ -392,38 +400,17 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
 
       // ---- General ----
       const generalPane = panels.get('general')!;
-      const layoutField = document.createElement('div');
-      layoutField.className = 'kapi-settings-field';
-      const layoutCaption = document.createElement('span');
-      layoutCaption.className = 'kapi-device-label';
-      layoutCaption.textContent = cb.labels.defaultLayout;
-      const layoutRow = document.createElement('div');
-      layoutRow.className = 'kapi-settings-segment';
-      layoutRow.setAttribute('role', 'group');
-      const layouts: { id: KapiLayout; label: string }[] = [
-        { id: 'grid', label: cb.labels.layoutGridShort },
-        { id: 'spotlight', label: cb.labels.layoutSpotlightShort },
-        { id: 'sidebar', label: cb.labels.layoutSidebarShort },
-      ];
-      for (const layout of layouts) {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'kapi-settings-chip';
-        b.textContent = layout.label;
-        b.classList.toggle('is-active', cb.getLayout() === layout.id);
-        b.setAttribute('aria-pressed', cb.getLayout() === layout.id ? 'true' : 'false');
-        b.addEventListener('click', () => {
-          cb.onLayout(layout.id);
-          for (const x of layoutRow.querySelectorAll('.kapi-settings-chip')) {
-            const on = x === b;
-            x.classList.toggle('is-active', on);
-            x.setAttribute('aria-pressed', on ? 'true' : 'false');
-          }
-        });
-        layoutRow.appendChild(b);
-      }
-      layoutField.append(layoutCaption, layoutRow);
-      generalPane.appendChild(layoutField);
+      addSegment(
+        generalPane,
+        cb.labels.defaultLayout,
+        [
+          { id: 'grid' as const, label: cb.labels.layoutGridShort },
+          { id: 'spotlight' as const, label: cb.labels.layoutSpotlightShort },
+          { id: 'sidebar' as const, label: cb.labels.layoutSidebarShort },
+        ],
+        cb.getLayout(),
+        (layout) => cb.onLayout(layout),
+      );
 
       const shortcutsRow = document.createElement('label');
       shortcutsRow.className = 'kapi-settings-toggle';
@@ -451,7 +438,7 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
   async function toggle() {
     if (isOpen()) {
       close();
-      cb.onClose();
+      cb.onClose?.();
       return;
     }
     await open();

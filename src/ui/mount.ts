@@ -220,14 +220,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       persist({ devices: { audioOutputId: deviceId } });
       void applyAudioOutput(deviceId);
     },
-    onBackground: (mode) => {
-      applyBackground(mode);
-    },
-    onBackgroundImage: (file) => {
-      if (bgImageUrl) URL.revokeObjectURL(bgImageUrl);
-      bgImageUrl = URL.createObjectURL(file);
-      applyBackground({ image: bgImageUrl });
-    },
+    onBackground: (mode) => applyBackground(mode),
+    onBackgroundImage: (file) => pickBackgroundImage(file),
     onBlurAmount: (amount) => {
       blurAmount = amount;
       persist({ effects: { blurAmount: amount } });
@@ -240,7 +234,6 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       persist({ ui: { shortcuts: on } });
     },
     onError: (err) => reportError(err),
-    onClose: () => undefined,
   });
   const settingsEl = settings.el;
   const reactPanel = document.createElement('div');
@@ -608,13 +601,16 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     persist({ ui: { videoFit: fit } });
   }
 
+  async function setAudioSink(el: HTMLMediaElement, deviceId: string) {
+    const media = el as HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> };
+    if (typeof media.setSinkId !== 'function') return;
+    await media.setSinkId(deviceId || '');
+  }
+
   async function applyAudioOutput(deviceId: string) {
-    const sink = deviceId || '';
     for (const audio of remoteAudio.values()) {
-      const el = audio as HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> };
-      if (typeof el.setSinkId !== 'function') continue;
       try {
-        await el.setSinkId(sink);
+        await setAudioSink(audio, deviceId);
       } catch (err) {
         reportError(err);
       }
@@ -723,7 +719,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     avatar.className = 'kapi-avatar';
     const avatarInitials = document.createElement('span');
     avatarInitials.className = 'kapi-avatar-initials';
-    avatarInitials.textContent = initials(nameFor(peerId, label));
+    avatarInitials.textContent = initials(label || peerId);
     avatar.appendChild(avatarInitials);
 
     const meta = document.createElement('div');
@@ -774,11 +770,6 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     armFrameWatch(tile);
     applyLayout();
     return tile;
-  }
-
-  function nameFor(peerId: string, fallback: string): string {
-    if (peerId === selfId) return fallback;
-    return fallback || peerId;
   }
 
   /** Reflect "no live video" (muted/disabled/no track, or frames stopped
@@ -949,10 +940,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       root.appendChild(audio);
       remoteAudio.set(peerId, audio);
       if (audioOutputId) {
-        const el = audio as HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> };
-        if (typeof el.setSinkId === 'function') {
-          void el.setSinkId(audioOutputId).catch(() => undefined);
-        }
+        void setAudioSink(audio, audioOutputId).catch(() => undefined);
       }
     }
     if (audio.srcObject !== stream) audio.srcObject = stream;
@@ -1003,17 +991,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
   // ---------- panels ----------
 
-  function showPanel(which: 'participants' | 'settings', show: boolean) {
-    if (which === 'settings') {
-      if (show) {
-        closeOverflow();
-        pane.classList.add('hidden');
-        void settings.open();
-      } else {
-        settings.close();
-      }
-      return;
-    }
+  function showParticipants(show: boolean) {
     if (show) {
       closeOverflow();
       settings.close();
@@ -1032,8 +1010,9 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   /** Cap concurrent floats so a reaction storm cannot flood the DOM. */
   const MAX_FLOATS = 24;
 
-  function closeReactions() {
+  function closePickers() {
     reactPanel.classList.add('hidden');
+    bgPanel.classList.add('hidden');
   }
 
   function toggleReactions() {
@@ -1041,26 +1020,6 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     bgPanel.classList.add('hidden');
     reactPanel.classList.toggle('hidden');
   }
-
-  // Click-away closes the pickers (pointerdown fires before click, so the
-  // react/background buttons and the pickers themselves are excluded to keep
-  // the toggles sane; .kapi-bg-picker shares .kapi-reaction-picker's class).
-  const onDocPointerForPickers = (e: Event) => {
-    if (reactPanel.classList.contains('hidden') && bgPanel.classList.contains('hidden')) return;
-    const target = e.target;
-    if (
-      target instanceof Element &&
-      (target.closest('.kapi-reaction-picker') ||
-        target.closest('button[data-id="react"]') ||
-        target.closest('button[data-id="background"]'))
-    ) {
-      return;
-    }
-    closeReactions();
-    bgPanel.classList.add('hidden');
-  };
-  document.addEventListener('pointerdown', onDocPointerForPickers);
-  unsubs.push(() => document.removeEventListener('pointerdown', onDocPointerForPickers));
 
   // Hot-plug: plugging in a camera/mic mid-call restores its toolbar button
   // (and unplugging dims it) without a reload.
@@ -1081,7 +1040,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     b.title = emoji;
     b.setAttribute('aria-label', emoji);
     b.addEventListener('click', () => {
-      closeReactions();
+      closePickers();
       if (room) room.sendReaction(emoji);
       else spawnReactionFloat(emoji); // join still in flight — local feedback only
     });
@@ -1121,6 +1080,12 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     for (const b of bgPanel.querySelectorAll<HTMLButtonElement>('button[data-bg]')) {
       b.classList.toggle('is-active', b.dataset.bg === active);
     }
+  }
+
+  function pickBackgroundImage(file: File) {
+    if (bgImageUrl) URL.revokeObjectURL(bgImageUrl);
+    bgImageUrl = URL.createObjectURL(file);
+    applyBackground({ image: bgImageUrl });
   }
 
   /** Optimistically paint, then hand off to the room (errors toast). */
@@ -1164,10 +1129,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   bgFile.addEventListener('change', () => {
     const file = bgFile.files?.[0];
     bgFile.value = '';
-    if (!file) return;
-    if (bgImageUrl) URL.revokeObjectURL(bgImageUrl);
-    bgImageUrl = URL.createObjectURL(file);
-    applyBackground({ image: bgImageUrl });
+    if (file) pickBackgroundImage(file);
   });
   bgPanel.append(bgImageBtn, bgFile);
   paintBgPicker();
@@ -1180,6 +1142,26 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       tile.conn.title = qualityLabel(quality, labels);
     }
     if (!pane.classList.contains('hidden')) renderParticipants();
+  }
+
+  function rosterAvatar(displayName: string, avatarUrl?: string): HTMLElement {
+    const url = avatarUrl?.trim();
+    if (url) {
+      const img = document.createElement('img');
+      img.className = 'kapi-roster-avatar';
+      img.alt = '';
+      img.decoding = 'async';
+      img.referrerPolicy = 'no-referrer';
+      img.src = url;
+      img.addEventListener('error', () => {
+        img.replaceWith(rosterAvatar(displayName));
+      });
+      return img;
+    }
+    const chip = document.createElement('span');
+    chip.className = 'kapi-roster-initials';
+    chip.textContent = initials(displayName);
+    return chip;
   }
 
   function renderParticipants() {
@@ -1201,27 +1183,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
           : (p.displayName ?? p.peerId);
       const name = document.createElement('span');
       name.textContent = display;
-      const avatarUrl = p.avatarUrl?.trim();
-      if (avatarUrl) {
-        const img = document.createElement('img');
-        img.className = 'kapi-roster-avatar';
-        img.alt = '';
-        img.decoding = 'async';
-        img.referrerPolicy = 'no-referrer';
-        img.src = avatarUrl;
-        img.addEventListener('error', () => {
-          const chip = document.createElement('span');
-          chip.className = 'kapi-roster-initials';
-          chip.textContent = initials(p.displayName ?? p.peerId);
-          img.replaceWith(chip);
-        });
-        li.append(img, name);
-      } else {
-        const chip = document.createElement('span');
-        chip.className = 'kapi-roster-initials';
-        chip.textContent = initials(p.displayName ?? p.peerId);
-        li.append(chip, name);
-      }
+      li.append(rosterAvatar(p.displayName ?? p.peerId, p.avatarUrl), name);
       if (p.peerId !== selfId && connUi === 'bars') {
         const q = peerQuality.get(p.peerId) ?? 'unknown';
         const sig = document.createElement('span');
@@ -1322,7 +1284,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     if (!room) return;
     const opening = !settings.isOpen();
     if (opening) {
-      showPanel('participants', false);
+      showParticipants(false);
       closeOverflow();
       await settings.open();
     } else {
@@ -1385,8 +1347,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       closeOverflow();
       return;
     }
-    closeReactions();
-    bgPanel.classList.add('hidden');
+    closePickers();
     overflowMenu.classList.remove('hidden');
     moreBtn.setAttribute('aria-expanded', 'true');
     placeOverflow();
@@ -1448,18 +1409,32 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     if (e.target instanceof Element && e.target.closest('button')) closeOverflow();
   });
 
-  const onDocPointerForOverflow = (e: Event) => {
-    if (overflowMenu.classList.contains('hidden')) return;
+  // Click-away closes overflow + pickers (pointerdown before click so the
+  // toggle buttons and their panels are excluded).
+  const onDocPointerDown = (e: Event) => {
     const target = e.target;
-    if (target instanceof Element && (target.closest('.kapi-overflow') || target.closest('button[data-id="more"]'))) {
+    if (!(target instanceof Element)) return;
+
+    if (!overflowMenu.classList.contains('hidden')) {
+      if (!target.closest('.kapi-overflow') && !target.closest('button[data-id="more"]')) {
+        closeOverflow();
+      }
+    }
+
+    if (reactPanel.classList.contains('hidden') && bgPanel.classList.contains('hidden')) return;
+    if (
+      target.closest('.kapi-reaction-picker') ||
+      target.closest('button[data-id="react"]') ||
+      target.closest('button[data-id="background"]')
+    ) {
       return;
     }
-    closeOverflow();
+    closePickers();
   };
-  document.addEventListener('pointerdown', onDocPointerForOverflow);
-  unsubs.push(() => document.removeEventListener('pointerdown', onDocPointerForOverflow));
+  document.addEventListener('pointerdown', onDocPointerDown);
+  unsubs.push(() => document.removeEventListener('pointerdown', onDocPointerDown));
 
-  const onKeyForOverflow = (e: KeyboardEvent) => {
+  const onKeyForChrome = (e: KeyboardEvent) => {
     if (e.key !== 'Escape') return;
     if (settings.isOpen()) {
       settings.close();
@@ -1467,16 +1442,15 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       return;
     }
     if (!pane.classList.contains('hidden')) {
-      showPanel('participants', false);
+      showParticipants(false);
       e.preventDefault();
       return;
     }
     closeOverflow();
-    closeReactions();
-    bgPanel.classList.add('hidden');
+    closePickers();
   };
-  document.addEventListener('keydown', onKeyForOverflow);
-  unsubs.push(() => document.removeEventListener('keydown', onKeyForOverflow));
+  document.addEventListener('keydown', onKeyForChrome);
+  unsubs.push(() => document.removeEventListener('keydown', onKeyForChrome));
 
   // Root resize: re-fit the toolbar, re-pick grid columns (Zoom-style area
   // math is aspect-sensitive), and re-hint senders about new tile sizes.
@@ -1587,7 +1561,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     participants: () => {
       const opening = pane.classList.contains('hidden');
       if (opening) renderParticipants();
-      showPanel('participants', opening);
+      showParticipants(opening);
     },
     layout: () => {
       setLayout(LAYOUTS[(LAYOUTS.indexOf(layoutMode) + 1) % LAYOUTS.length]!);

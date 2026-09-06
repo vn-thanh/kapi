@@ -41,6 +41,8 @@ export function injectStyles() {
   min-height: 0;
   min-width: 0;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+  /* Tiles are click-to-pin — make that discoverable and keyboard-visible. */
+  cursor: pointer;
 }
 .kapi-tile video {
   position: absolute;
@@ -58,10 +60,6 @@ export function injectStyles() {
 /* Opt back into edge-to-edge cropping (camera tiles only). */
 .kapi-root.kapi-fit-cover .kapi-tile video {
   object-fit: cover;
-}
-/* Tiles are click-to-pin — make that discoverable and keyboard-visible. */
-.kapi-tile {
-  cursor: pointer;
 }
 .kapi-tile:focus-visible {
   outline: 2px solid var(--kapi-accent, #3b82f6);
@@ -168,7 +166,7 @@ export function injectStyles() {
 }
 /* Narrow mount: sidebar column steals too much stage — use a bottom
    filmstrip like spotlight instead (same tiles, different chrome).
-   Selectors target descendants of the container (`.kapi-root`); the root
+   Selectors target descendants of the container (.kapi-root); the root
    itself cannot appear in the selector path. */
 @container kapi (max-width: 720px) {
   .kapi-main.is-sidebar {
@@ -296,30 +294,40 @@ export function injectStyles() {
   height: 12px;
   border-radius: 0;
 }
-.kapi-conn[data-ui='bars'] .kapi-conn-bar {
+.kapi-conn[data-ui='bars'] .kapi-conn-bar,
+.kapi-roster-quality .kapi-conn-bar {
   display: block;
   width: 3px;
   border-radius: 1px;
   background: rgba(255, 255, 255, 0.28);
   transition: background 0.2s ease;
 }
-.kapi-conn[data-ui='bars'] .kapi-conn-bar:nth-child(1) { height: 4px; }
-.kapi-conn[data-ui='bars'] .kapi-conn-bar:nth-child(2) { height: 7px; }
-.kapi-conn[data-ui='bars'] .kapi-conn-bar:nth-child(3) { height: 10px; }
-.kapi-conn[data-ui='bars'] .kapi-conn-bar:nth-child(4) { height: 12px; }
-.kapi-conn[data-ui='bars'][data-quality='excellent'] .kapi-conn-bar {
+.kapi-conn[data-ui='bars'] .kapi-conn-bar:nth-child(1),
+.kapi-roster-quality .kapi-conn-bar:nth-child(1) { height: 4px; }
+.kapi-conn[data-ui='bars'] .kapi-conn-bar:nth-child(2),
+.kapi-roster-quality .kapi-conn-bar:nth-child(2) { height: 7px; }
+.kapi-conn[data-ui='bars'] .kapi-conn-bar:nth-child(3),
+.kapi-roster-quality .kapi-conn-bar:nth-child(3) { height: 10px; }
+.kapi-conn[data-ui='bars'] .kapi-conn-bar:nth-child(4),
+.kapi-roster-quality .kapi-conn-bar:nth-child(4) { height: 12px; }
+.kapi-conn[data-ui='bars'][data-quality='excellent'] .kapi-conn-bar,
+.kapi-roster-quality[data-quality='excellent'] .kapi-conn-bar {
   background: #22c55e;
 }
-.kapi-conn[data-ui='bars'][data-quality='good'] .kapi-conn-bar:nth-child(-n+3) {
+.kapi-conn[data-ui='bars'][data-quality='good'] .kapi-conn-bar:nth-child(-n+3),
+.kapi-roster-quality[data-quality='good'] .kapi-conn-bar:nth-child(-n+3) {
   background: #84cc16;
 }
-.kapi-conn[data-ui='bars'][data-quality='poor'] .kapi-conn-bar:nth-child(-n+2) {
+.kapi-conn[data-ui='bars'][data-quality='poor'] .kapi-conn-bar:nth-child(-n+2),
+.kapi-roster-quality[data-quality='poor'] .kapi-conn-bar:nth-child(-n+2) {
   background: #eab308;
 }
-.kapi-conn[data-ui='bars'][data-quality='lost'] .kapi-conn-bar:nth-child(1) {
+.kapi-conn[data-ui='bars'][data-quality='lost'] .kapi-conn-bar:nth-child(1),
+.kapi-roster-quality[data-quality='lost'] .kapi-conn-bar:nth-child(1) {
   background: var(--kapi-danger, #ef4444);
 }
-.kapi-conn[data-ui='bars'][data-quality='unknown'] .kapi-conn-bar:nth-child(-n+2) {
+.kapi-conn[data-ui='bars'][data-quality='unknown'] .kapi-conn-bar:nth-child(-n+2),
+.kapi-roster-quality[data-quality='unknown'] .kapi-conn-bar:nth-child(-n+2) {
   background: #eab308;
   animation: kapi-pulse 1.2s ease-in-out infinite;
 }
@@ -350,43 +358,11 @@ export function injectStyles() {
   gap: 2px;
   height: 12px;
 }
-.kapi-roster-quality .kapi-conn-bar {
-  display: block;
-  width: 3px;
-  border-radius: 1px;
-  background: rgba(255, 255, 255, 0.28);
-}
-.kapi-roster-quality .kapi-conn-bar:nth-child(1) { height: 4px; }
-.kapi-roster-quality .kapi-conn-bar:nth-child(2) { height: 7px; }
-.kapi-roster-quality .kapi-conn-bar:nth-child(3) { height: 10px; }
-.kapi-roster-quality .kapi-conn-bar:nth-child(4) { height: 12px; }
-.kapi-roster-quality[data-quality='excellent'] .kapi-conn-bar { background: #22c55e; }
-.kapi-roster-quality[data-quality='good'] .kapi-conn-bar:nth-child(-n+3) { background: #84cc16; }
-.kapi-roster-quality[data-quality='poor'] .kapi-conn-bar:nth-child(-n+2) { background: #eab308; }
-.kapi-roster-quality[data-quality='lost'] .kapi-conn-bar:nth-child(1) { background: var(--kapi-danger, #ef4444); }
-.kapi-roster-quality[data-quality='unknown'] .kapi-conn-bar:nth-child(-n+2) {
-  background: #eab308;
-  animation: kapi-pulse 1.2s ease-in-out infinite;
-}
 @keyframes kapi-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
-.kapi-mic-state {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  background: rgba(239, 68, 68, 0.9);
-  color: #fff;
-  line-height: 0;
-}
-.kapi-mic-state.hidden {
-  display: none;
-}
+.kapi-mic-state,
 .kapi-share-audio {
   flex: none;
   display: inline-flex;
@@ -395,13 +371,20 @@ export function injectStyles() {
   width: 20px;
   height: 20px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--kapi-accent, #3b82f6) 85%, #000);
   color: #fff;
-  font-size: 12px;
-  line-height: 1;
+  line-height: 0;
 }
+.kapi-mic-state {
+  background: rgba(239, 68, 68, 0.9);
+}
+.kapi-mic-state.hidden,
 .kapi-share-audio.hidden {
   display: none;
+}
+.kapi-share-audio {
+  background: color-mix(in srgb, var(--kapi-accent, #3b82f6) 85%, #000);
+  font-size: 12px;
+  line-height: 1;
 }
 
 /* ---------- toolbar ----------
@@ -469,11 +452,13 @@ export function injectStyles() {
   outline: 2px solid var(--kapi-accent, #3b82f6);
   outline-offset: 2px;
 }
-.kapi-toolbar button.is-off {
+.kapi-toolbar button.is-off,
+.kapi-overflow button.is-off {
   background: rgba(239, 68, 68, 0.92);
   color: #fff;
 }
-.kapi-toolbar button.is-off:hover {
+.kapi-toolbar button.is-off:hover,
+.kapi-overflow button.is-off:hover {
   background: rgba(239, 68, 68, 1);
 }
 .kapi-toolbar button.is-active {
@@ -481,11 +466,18 @@ export function injectStyles() {
   color: #fff;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--kapi-accent, #3b82f6) 30%, transparent);
 }
+.kapi-overflow button.is-active {
+  background: var(--kapi-accent, #3b82f6);
+  color: #fff;
+}
 /* No such device on this machine — visibly dead, not another toggle state. */
-.kapi-toolbar button.is-unavailable {
+.kapi-toolbar button.is-unavailable,
+.kapi-overflow button.is-unavailable {
   opacity: 0.38;
   cursor: not-allowed;
   filter: grayscale(1);
+}
+.kapi-toolbar button.is-unavailable {
   box-shadow: none;
 }
 .kapi-toolbar button.is-unavailable:hover {
@@ -493,6 +485,9 @@ export function injectStyles() {
 }
 .kapi-toolbar button.is-unavailable:active {
   transform: none;
+}
+.kapi-overflow button.is-unavailable:hover {
+  background: transparent;
 }
 .kapi-toolbar button[data-id='hangup'] {
   background: var(--kapi-danger, #ef4444);
@@ -559,25 +554,6 @@ export function injectStyles() {
 .kapi-overflow button:focus-visible {
   outline: 2px solid var(--kapi-accent, #3b82f6);
   outline-offset: -2px;
-}
-.kapi-overflow button.is-off {
-  background: rgba(239, 68, 68, 0.92);
-  color: #fff;
-}
-.kapi-overflow button.is-off:hover {
-  background: rgba(239, 68, 68, 1);
-}
-.kapi-overflow button.is-active {
-  background: var(--kapi-accent, #3b82f6);
-  color: #fff;
-}
-.kapi-overflow button.is-unavailable {
-  opacity: 0.38;
-  cursor: not-allowed;
-  filter: grayscale(1);
-}
-.kapi-overflow button.is-unavailable:hover {
-  background: transparent;
 }
 
 /* ---------- side panels ---------- */
