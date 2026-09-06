@@ -4,6 +4,53 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project is maintained by [release-please](https://github.com/googleapis/release-please) — future entries are generated automatically from Conventional Commits.
 
+## [1.4.0](https://github.com/vn-thanh/kapi/compare/v1.3.0...v1.4.0) (2026-09-06)
+
+
+### Features
+
+* adaptive per-connection video quality and Zoom-style layout geometry ([fa42e7d](https://github.com/vn-thanh/kapi/commit/fa42e7d5cf241ca9aec054f9dd708aee12d30282))
+* add local demo, toolbar icons, and media fallbacks ([986b42e](https://github.com/vn-thanh/kapi/commit/986b42e5613ba495bc7c2368a4c693287c45af14))
+* collapse overflowing toolbar controls into a More menu ([8a2b183](https://github.com/vn-thanh/kapi/commit/8a2b18352e818fff931143556e9edde9e167c7df))
+* custom reaction emoji set via the reactions option ([5d785b8](https://github.com/vn-thanh/kapi/commit/5d785b8e55f46f988d1122ae605d082e0aed35d6))
+* emoji reactions ([258e716](https://github.com/vn-thanh/kapi/commit/258e716fdc728fabbacf3b094cb4c8bd6f4e1566))
+* grid/spotlight/sidebar layouts with dominant-speaker spotlight ([6f7a454](https://github.com/vn-thanh/kapi/commit/6f7a454d9d2a9c9c701792b518bd7cdb2c391ca9))
+* in-call keyboard shortcuts (M mute, V camera) with opt-out ([706943e](https://github.com/vn-thanh/kapi/commit/706943e117619ac2b56bb000be3d61b8ded3656a))
+* initial @vn-thanh/kapi P2P mesh WebRTC library ([905da5f](https://github.com/vn-thanh/kapi/commit/905da5fba12e85b249c8014b87a2b1aa3cb5d422))
+* join muted by default and show connection quality bars ([719c45c](https://github.com/vn-thanh/kapi/commit/719c45cdfd05744a3c118738880b907b94593a1c))
+* mark mic/cam unavailable when the machine has no such device ([39a2cf7](https://github.com/vn-thanh/kapi/commit/39a2cf7206e0035152e87da8fdc34158fab11814))
+* overridable device/muted labels and a layout tooltip that tracks the view ([61db628](https://github.com/vn-thanh/kapi/commit/61db628920359196abab4eeb37fa19c12ab8e874))
+* screen-share with tab/system audio ([c43c6d1](https://github.com/vn-thanh/kapi/commit/c43c6d1d4d42ecbcb6d6768517466b168dffc24d))
+* shareable ngrok demo and harden P2P mesh negotiation. ([b76a6a5](https://github.com/vn-thanh/kapi/commit/b76a6a536a013014960f1f2337b88625cd2db887))
+* support custom peer avatars and clearer hang-up icon ([dd63314](https://github.com/vn-thanh/kapi/commit/dd6331498f9eadcfcbcfbde7dee62ba2205e224a))
+* true cam-off and live setIdentity API ([5d18ad0](https://github.com/vn-thanh/kapi/commit/5d18ad04ed764d1658811924900827ab5ab44cd6))
+* **ui:** background picker with image support; smooth reaction floats ([b5fa2cb](https://github.com/vn-thanh/kapi/commit/b5fa2cb82ef4163f59f60f1892cde887d11ebef6))
+* **ui:** persist settings and centralize preferences panel ([7c7229f](https://github.com/vn-thanh/kapi/commit/7c7229f79444b4bb29fde86bfb2521184d985bda))
+* **ui:** share-audio chip and live peer identity ([c4bef27](https://github.com/vn-thanh/kapi/commit/c4bef276fe0cf43d1f9cadcedbd9e8a64e1b1479))
+
+
+### Bug Fixes
+
+* a throwing signal adapter can no longer wedge negotiation or hangup ([82560ce](https://github.com/vn-thanh/kapi/commit/82560ce629467ce140a847da4a9e8a75858c1a1c))
+* background blur composited the person instead of the background ([69970af](https://github.com/vn-thanh/kapi/commit/69970afe5686c23abc2fc74e903685b85bf18265))
+* background button unavailable without a camera, null videoWidth race ([1032223](https://github.com/vn-thanh/kapi/commit/1032223f825ded19bb6956d4ebf4bd82df7026d7))
+* broadcast mic/cam state so remotes see the mute chip ([80fc833](https://github.com/vn-thanh/kapi/commit/80fc8336a7ac3cb7d1a15c72ae2a377256b58cdf))
+* display video fully at true aspect ratio, stage layout for screen share ([6eace7c](https://github.com/vn-thanh/kapi/commit/6eace7ce8944e8801a8f5d1eade7f08734ed2ec9))
+* hide frozen last frame when remote stops sending ([9e1bcac](https://github.com/vn-thanh/kapi/commit/9e1bcac15f8f7763eeeb331b8f25a956b6d4bbc4))
+* keep screen share alive on cam-off and preserve peer-meta names ([3a1905a](https://github.com/vn-thanh/kapi/commit/3a1905a2b526d00a75fb959c003418eb706eba3b))
+* lifecycle leaks and races around hangup and failed joins ([f43483d](https://github.com/vn-thanh/kapi/commit/f43483df6da180ed2b17b4159a7188377e3f4fb1))
+* media robustness, negotiation state, and revamped tile UI ([d0156ef](https://github.com/vn-thanh/kapi/commit/d0156efdf9c2669de4606b2ab46cb0effc65a2a8))
+* one-way media for late joiners — attach tracks via addTrack, not pre-created sendrecv transceivers ([f3cc0ae](https://github.com/vn-thanh/kapi/commit/f3cc0ae5e2232ac5ed19c31263b3136ff68e8c50))
+* preserve avatar on partial peer-meta and unblock background Worker ([c10dcd4](https://github.com/vn-thanh/kapi/commit/c10dcd4d377d51e022d5fcfc3b6bdea8be695788))
+* screen share for remotes and demo MediaPipe loading. ([6aba7ea](https://github.com/vn-thanh/kapi/commit/6aba7ea6b5f1b12f154b11d93b2d81c3e67e1a7d))
+* stop background leak on hangup and recover stale preferred devices ([1ebd935](https://github.com/vn-thanh/kapi/commit/1ebd935e65c62012dc5b6239d796fb9b801d9754))
+
+
+### Performance Improvements
+
+* reuse the segmentation mask raster instead of allocating one per frame ([f0653c2](https://github.com/vn-thanh/kapi/commit/f0653c20df412590174335ae903eb37772becb40))
+* run MediaPipe background effects in a Worker ([9a827b8](https://github.com/vn-thanh/kapi/commit/9a827b872d1be6c51008ed35b288286d6906adfe))
+
 ## [Unreleased]
 
 ## [1.3.0](https://github.com/vn-thanh/kapi/compare/v1.2.0...v1.3.0) (2026-09-06)
