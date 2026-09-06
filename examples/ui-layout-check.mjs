@@ -297,7 +297,61 @@ async function main() {
       { timeout: 5000 },
     );
 
-    console.log('ok: ui layouts, cycling, pinning, setLayout, remote mute, toolbar overflow');
+    // 7. background picker: opens from the toolbar, applies blur, then resets
+    await pageObj.evaluate(() => {
+      document
+        .querySelectorAll('.kapi-root')[0]
+        .querySelector('button[data-id="background"]')
+        .click();
+    });
+    let bg = await pageObj.evaluate(() => {
+      const r = document.querySelectorAll('.kapi-root')[0];
+      const p = r.querySelector('.kapi-bg-picker');
+      return {
+        open: !!p && !p.classList.contains('hidden'),
+        modes: [...(p?.querySelectorAll('button[data-bg]') ?? [])].map((b) => b.dataset.bg),
+      };
+    });
+    assert.equal(bg.open, true, 'background picker opens from the toolbar button');
+    assert.deepEqual(bg.modes, ['none', 'blur', 'remove', 'image'], 'picker lists mode buttons');
+
+    await pageObj.evaluate(() => {
+      document
+        .querySelectorAll('.kapi-root')[0]
+        .querySelector('.kapi-bg-picker button[data-bg="blur"]')
+        .click();
+    });
+    bg = await pageObj.evaluate(() => {
+      const r = document.querySelectorAll('.kapi-root')[0];
+      return {
+        open: !r.querySelector('.kapi-bg-picker').classList.contains('hidden'),
+        active: r.querySelector('button[data-id="background"]').classList.contains('is-active'),
+      };
+    });
+    assert.equal(bg.open, false, 'picker closes after picking a mode');
+    assert.equal(bg.active, true, 'toolbar background button paints active while an effect is on');
+
+    await pageObj.evaluate(() => {
+      document
+        .querySelectorAll('.kapi-root')[0]
+        .querySelector('button[data-id="background"]')
+        .click();
+    });
+    await pageObj.evaluate(() => {
+      document
+        .querySelectorAll('.kapi-root')[0]
+        .querySelector('.kapi-bg-picker button[data-bg="none"]')
+        .click();
+    });
+    bg = await pageObj.evaluate(() => {
+      const r = document.querySelectorAll('.kapi-root')[0];
+      return {
+        active: r.querySelector('button[data-id="background"]').classList.contains('is-active'),
+      };
+    });
+    assert.equal(bg.active, false, 'picking none clears the active paint');
+
+    console.log('ok: ui layouts, cycling, pinning, setLayout, remote mute, toolbar overflow, background picker');
   } finally {
     await browser?.close().catch(() => undefined);
     server.kill();

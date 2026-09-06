@@ -220,6 +220,12 @@ export interface KapiUiLabels {
   react?: string;
   participants?: string;
   background?: string;
+  /** Background-picker mode buttons (none / blur / remove). */
+  bgNone?: string;
+  bgBlur?: string;
+  bgRemove?: string;
+  /** "Pick an image file" button in the background picker. */
+  bgImage?: string;
   settings?: string;
   hangup?: string;
   /** Overflow ("⋯") button that holds toolbar controls that don't fit. */

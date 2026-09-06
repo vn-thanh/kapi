@@ -134,6 +134,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   reactPanel.className = 'kapi-reaction-picker hidden';
   reactPanel.setAttribute('role', 'group');
   reactPanel.setAttribute('aria-label', labels.react);
+  const bgPanel = document.createElement('div');
+  bgPanel.className = 'kapi-reaction-picker kapi-bg-picker hidden';
+  bgPanel.setAttribute('role', 'group');
+  bgPanel.setAttribute('aria-label', labels.background);
   const overflowMenu = document.createElement('div');
   overflowMenu.className = 'kapi-overflow hidden';
   overflowMenu.id = `kapi-overflow-${selfId.replace(/[^a-zA-Z0-9_-]/g, '') || 'menu'}`;
@@ -158,7 +162,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   soundGate.className = 'kapi-sound-gate hidden';
   soundGate.textContent = labels.enableSound;
 
-  root.append(main, pane, settingsEl, reactPanel, bar, overflowMenu, toast, soundGate);
+  root.append(main, pane, settingsEl, reactPanel, bgPanel, bar, overflowMenu, toast, soundGate);
   parent.appendChild(root);
 
   const tiles = new Map<string, Tile>();
@@ -180,6 +184,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   let room: KapiRoom | null = null;
   let disposed = false;
   let bgMode: BackgroundMode = options.effects?.background ?? 'none';
+  /** Blob URL of the user-picked background image (revoked on re-pick). */
+  let bgImageUrl: string | null = null;
   const unsubs: Array<() => void> = [];
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -811,21 +817,29 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
   function toggleReactions() {
     closeOverflow();
+    bgPanel.classList.add('hidden');
     reactPanel.classList.toggle('hidden');
   }
 
-  // Click-away closes the picker (pointerdown fires before click, so the
-  // react button and the picker itself are excluded to keep the toggle sane).
-  const onDocPointerForReactions = (e: Event) => {
-    if (reactPanel.classList.contains('hidden')) return;
+  // Click-away closes the pickers (pointerdown fires before click, so the
+  // react/background buttons and the pickers themselves are excluded to keep
+  // the toggles sane; .kapi-bg-picker shares .kapi-reaction-picker's class).
+  const onDocPointerForPickers = (e: Event) => {
+    if (reactPanel.classList.contains('hidden') && bgPanel.classList.contains('hidden')) return;
     const target = e.target;
-    if (target instanceof Element && (target.closest('.kapi-reaction-picker') || target.closest('button[data-id="react"]'))) {
+    if (
+      target instanceof Element &&
+      (target.closest('.kapi-reaction-picker') ||
+        target.closest('button[data-id="react"]') ||
+        target.closest('button[data-id="background"]'))
+    ) {
       return;
     }
     closeReactions();
+    bgPanel.classList.add('hidden');
   };
-  document.addEventListener('pointerdown', onDocPointerForReactions);
-  unsubs.push(() => document.removeEventListener('pointerdown', onDocPointerForReactions));
+  document.addEventListener('pointerdown', onDocPointerForPickers);
+  unsubs.push(() => document.removeEventListener('pointerdown', onDocPointerForPickers));
 
   // Hot-plug: plugging in a camera/mic mid-call restores its toolbar button
   // (and unplugging dims it) without a reload.
@@ -868,6 +882,64 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     el.addEventListener('animationend', () => el.remove());
     root.appendChild(el);
   }
+
+  // ---------- background picker (none / blur / remove / image) ----------
+
+  function toggleBgPicker() {
+    closeOverflow();
+    reactPanel.classList.add('hidden');
+    bgPanel.classList.toggle('hidden');
+  }
+
+  /** Highlight the mode matching the current `bgMode`. */
+  function paintBgPicker() {
+    const active = typeof bgMode === 'string' ? bgMode : 'image';
+    for (const b of bgPanel.querySelectorAll<HTMLButtonElement>('button[data-bg]')) {
+      b.classList.toggle('is-active', b.dataset.bg === active);
+    }
+  }
+
+  /** Optimistically paint, then hand off to the room (errors toast). */
+  function applyBackground(mode: BackgroundMode) {
+    if (!room) return; // picker only opens once joined, but stay safe
+    bgMode = mode;
+    paintBgPicker();
+    updateToolbarLabels();
+    void room.setBackground(mode).catch(reportError);
+    bgPanel.classList.add('hidden');
+  }
+
+  for (const choice of [
+    { mode: 'none' as const, label: labels.bgNone },
+    { mode: 'blur' as const, label: labels.bgBlur },
+    { mode: 'remove' as const, label: labels.bgRemove },
+  ]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.bg = choice.mode;
+    b.textContent = choice.label;
+    b.addEventListener('click', () => applyBackground(choice.mode));
+    bgPanel.appendChild(b);
+  }
+  const bgImageBtn = document.createElement('button');
+  bgImageBtn.type = 'button';
+  bgImageBtn.dataset.bg = 'image';
+  bgImageBtn.textContent = labels.bgImage;
+  const bgFile = document.createElement('input');
+  bgFile.type = 'file';
+  bgFile.accept = 'image/*';
+  bgFile.hidden = true;
+  bgImageBtn.addEventListener('click', () => bgFile.click());
+  bgFile.addEventListener('change', () => {
+    const file = bgFile.files?.[0];
+    bgFile.value = '';
+    if (!file) return;
+    if (bgImageUrl) URL.revokeObjectURL(bgImageUrl);
+    bgImageUrl = URL.createObjectURL(file);
+    applyBackground({ image: bgImageUrl });
+  });
+  bgPanel.append(bgImageBtn, bgFile);
+  paintBgPicker();
 
   function applyConnectionQuality(peerId: string, quality: ConnectionQuality) {
     peerQuality.set(peerId, quality);
@@ -983,7 +1055,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         const sharing = room?.sharing ?? false;
         paintButton(b, id, sharing ? labels.stopShare : labels.share, sharing ? 'active' : 'on');
       } else if (id === 'background') {
-        paintButton(b, id, labels.background);
+        paintButton(b, id, labels.background, bgMode !== 'none' ? 'active' : 'on');
       } else if (id === 'layout') {
         paintButton(b, id, layoutTip(layoutMode));
       } else {
@@ -1119,6 +1191,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       return;
     }
     closeReactions();
+    bgPanel.classList.add('hidden');
     overflowMenu.classList.remove('hidden');
     moreBtn.setAttribute('aria-expanded', 'true');
     placeOverflow();
@@ -1192,7 +1265,11 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   unsubs.push(() => document.removeEventListener('pointerdown', onDocPointerForOverflow));
 
   const onKeyForOverflow = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') closeOverflow();
+    if (e.key === 'Escape') {
+      closeOverflow();
+      closeReactions();
+      bgPanel.classList.add('hidden');
+    }
   };
   document.addEventListener('keydown', onKeyForOverflow);
   unsubs.push(() => document.removeEventListener('keydown', onKeyForOverflow));
@@ -1285,11 +1362,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         showToast(labels.noCam);
         return;
       }
-      const modes: Array<'none' | 'blur' | 'remove'> = ['none', 'blur', 'remove'];
-      const cur = typeof bgMode === 'string' ? bgMode : 'none';
-      const idx = Math.max(0, modes.indexOf(cur as 'none' | 'blur' | 'remove'));
-      bgMode = modes[(idx + 1) % modes.length]!;
-      room.setBackground(bgMode).catch(reportError);
+      toggleBgPicker();
     },
     settings: () => void showSettings(),
     hangup: () => dispose(),

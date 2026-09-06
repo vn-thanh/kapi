@@ -182,6 +182,7 @@ Full payloads: [docs/OPTIONS.md](docs/OPTIONS.md#room-events-roomonevent-handler
 `mount(parent, options)` renders a complete meeting experience into any element:
 
 - **Toolbar** — `mic · cam · share · react · participants · layout · background · settings · hangup` (pick any subset via `toolbar`). On a narrow chrome the extras collapse into a ⋯ More menu; mic, camera and leave stay on the bar
+- **Background picker** — the background button opens a pill with `None / Blur / Remove / Image…`; `Image…` picks a local picture applied as a virtual background via `setBackground({ image })`
 - **Three layouts** — switch live with the view button or `handle.setLayout()`:
 
 | Layout | Behaviour |

@@ -662,6 +662,22 @@ export function injectStyles() {
   outline: 2px solid var(--kapi-accent, #3b82f6);
   outline-offset: 2px;
 }
+/* Background picker reuses the reaction pill chrome; text buttons instead of
+   emoji circles, active mode tinted. */
+.kapi-bg-picker button {
+  width: auto;
+  padding: 0 14px;
+  border-radius: 18px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.kapi-bg-picker button:hover {
+  transform: none;
+}
+.kapi-bg-picker button.is-active {
+  background: var(--kapi-accent, #3b82f6);
+  color: #fff;
+}
 .kapi-reaction-float {
   position: absolute;
   bottom: 64px;
@@ -671,23 +687,32 @@ export function injectStyles() {
   pointer-events: none;
   user-select: none;
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+  will-change: transform, opacity;
   animation-name: kapi-reaction-rise;
-  animation-timing-function: cubic-bezier(0.22, 0.75, 0.4, 1);
+  /* Per-keyframe curves below; linear covers any segment a keyframe leaves
+     unstated (e.g. opacity between 22% and 70%). */
+  animation-timing-function: linear;
   animation-fill-mode: forwards;
 }
 @keyframes kapi-reaction-rise {
   0% {
     transform: translate(0, 0) scale(0.5) rotate(0deg);
     opacity: 0;
+    animation-timing-function: cubic-bezier(0.22, 0.75, 0.4, 1);
   }
   10% {
     transform: translate(calc(var(--kapi-drift, 0px) * 0.15), -14px)
       scale(1.25) rotate(calc(var(--kapi-spin, 0deg) * 0.2));
     opacity: 1;
+    animation-timing-function: cubic-bezier(0.22, 0.75, 0.4, 1);
   }
   22% {
     transform: translate(calc(var(--kapi-drift, 0px) * 0.2), -40px)
       scale(1) rotate(0deg);
+    /* Flight: a SINGLE segment from here to 100% — the 70% keyframe restates
+       only opacity, so the curve is eased once instead of restarting at every
+       keyframe (that per-segment restart is what made the float pulse). */
+    animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
   }
   70% {
     opacity: 1;
