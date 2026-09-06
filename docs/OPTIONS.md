@@ -21,8 +21,9 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
     startMic?: boolean       // default false — mic off until user unmutes
     startCam?: boolean       // default false — camera off until user starts it
     acquire?: 'join' | 'on-enable'
-      // 'join' (default): getUserMedia on join for allowed kinds, then apply
-      //   startMic/startCam via track.enabled (fast unmute; cam LED may stay on)
+      // 'join' (default): getUserMedia on join for allowed kinds; startMic uses
+      //   track.enabled. Camera off stops the track + replaceTrack(null) so the
+      //   LED goes dark (re-acquires on setCam(true)).
       // 'on-enable': only acquire kinds that start on; acquire the rest when
       //   setMic(true)/setCam(true) — best privacy (no LED until cam is on).
       // Hosts with a pre-join lobby should pass lobby toggles as startMic/startCam.
@@ -157,11 +158,18 @@ may renegotiate peers.
 |-------|---------|-------|
 | `peer-joined` | `{ peerId, displayName?, avatarUrl? }` | Presence + peer connection created |
 | `peer-left` | `{ peerId }` | Link torn down / `leave` received |
+| `peer-meta` | `{ peerId, displayName?, avatarUrl? }` | Live identity update from `room.setIdentity()` / remote `peer-meta` signal |
 | `track` | `{ peerId, track, streams }` | Remote media arrived; merge tracks into one stream per peer (browser `streams` identity is unreliable across renegotiation). To hide video, don't rely on remote track `mute` alone — browsers fire it late or never when a sender stops sending (e.g. screen share stopped, `replaceTrack(null)`, disabled camera, w3c/webrtc-pc#3077) and the `<video>` would freeze on the last decoded frame. Treat "no presented frame for ~2s" (via `video.requestVideoFrameCallback`) as video-off; the built-in UI does this |
 | `peer-state` | `{ peerId, state }` | RTCPeerConnection state — drive connection badges |
 | `connection-quality` | `{ peerId, quality }` | `quality`: `'excellent'` \| `'good'` \| `'poor'` \| `'lost'` \| `'unknown'` — inbound packet loss + RTT (and PC state). Fires on the quality timer; jumps to `'lost'` on disconnect/fail. Disable with `connectionQuality: false`. Helpers: `scoreConnectionQuality` / `readQualitySample` |
 | `local-stream` | `{ stream }` | Local preview source; re-emitted on screen share, background, device switch |
 | `reaction` | `{ peerId, emoji }` | Emoji reaction — fired for remote arrivals AND for the local one sent via `room.sendReaction(emoji)`; the built-in UI floats it up the screen Jitsi-style |
-| `media-state` | `{ peerId, sharing, mic?, cam? }` | Mic / camera / screen-share toggled — fired locally by `setMic` / `setCam` / `shareScreen` and for remote peers via the `media-state` signal message. `mic` / `cam` may be omitted by older senders (`true` = on). The built-in UI shows a mute chip on the tile (and in the participant list) and promotes the sharer's tile to a full-width stage with uncropped (`contain`) video |
+| `media-state` | `{ peerId, sharing, mic?, cam?, shareAudio? }` | Mic / camera / screen-share toggled — fired locally by `setMic` / `setCam` / `shareScreen` and for remote peers via the `media-state` signal message. `shareAudio` is true when the active share includes tab/system audio. `mic` / `cam` / `shareAudio` may be omitted by older senders (`true` = on). The built-in UI shows a mute chip on the tile (and in the participant list), a ♪ chip when share audio is on, and promotes the sharer's tile to a full-width stage with uncropped (`contain`) video |
 | `error` | `{ error }` | Recoverable errors (ICE exhausted, maxPeers, …) |
 | `hangup` | — | Room closed |
+
+### Notable methods
+
+- `shareScreen(true|false)` — `getDisplayMedia` requests tab/system audio when the browser allows it; audio is sent on a separate outbound track so muting the mic never silences the share.
+- `setIdentity({ displayName?, avatarUrl? })` — update name/avatar mid-call and broadcast `peer-meta`.
+- `setCam(false)` — stops sending camera video (`replaceTrack(null)`) and releases the capture track (LED off).

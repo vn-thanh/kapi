@@ -33,7 +33,7 @@ npm install @vn-thanh/kapi
 
 Relay JSON only — never media.
 
-Suggested event: `kapi/signal` with `{ roomId, message }` where `message` is a kapi `SignalMessage` (`join` | `leave` | `offer` | `answer` | `ice` | `peers`).
+Suggested event: `kapi/signal` with `{ roomId, message }` where `message` is a kapi `SignalMessage` (`join` | `leave` | `offer` | `answer` | `ice` | `peers` | `media-state` | `peer-meta` | `reaction` | `video-hint`).
 
 1. Authenticate; authorize membership for `roomId`.
 2. Map `peerId` → connection for the room.

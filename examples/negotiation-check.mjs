@@ -222,7 +222,8 @@ Object.defineProperty(globalThis, 'navigator', {
         return new FakeMediaStream(tracks);
       },
       enumerateDevices: async () => [],
-      getDisplayMedia: async () => new FakeMediaStream([new FakeTrack('video')]),
+      getDisplayMedia: async () =>
+        new FakeMediaStream([new FakeTrack('video'), new FakeTrack('audio')]),
     },
   },
 });
@@ -258,6 +259,7 @@ const roomA = await KapiRoom.join({
   peerId: 'a-first',
   displayName: 'A',
   signal: bus.createAdapter('a-first'),
+  media: { startMic: true, startCam: true },
 });
 roomA.on('peer-joined', () => eventsA.joined++);
 roomA.on('peer-left', () => eventsA.left++);
@@ -270,6 +272,7 @@ const roomB = await KapiRoom.join({
   peerId: 'b-second',
   displayName: 'B',
   signal: bus.createAdapter('b-second'),
+  media: { startMic: true, startCam: true },
 });
 roomB.on('peer-joined', () => eventsB.joined++);
 roomB.on('peer-left', () => eventsB.left++);
@@ -292,6 +295,7 @@ const roomB2 = await KapiRoom.join({
   peerId: 'b-second',
   displayName: 'B2',
   signal: bus.createAdapter('b-second'),
+  media: { startMic: true, startCam: true },
 });
 roomB2.on('peer-state', ({ state }) => eventsB.states.push(state));
 await waitFor(() => eventsA.joined === 2, 'A sees re-join as fresh peer');
@@ -448,6 +452,56 @@ assert(eventsA.errors.length === 0, 'A stayed error-free');
   );
   await roomT.hangup(); // idempotent
   console.log('ok: throwing signal adapter cannot break hangup');
+}
+
+// True cam-off: default join does not leave a live camera track on the wire.
+{
+  const { KapiPeer } = await import('../dist/index.js');
+  const bus2 = createLocalSignalBus();
+  const room = await KapiRoom.join({
+    roomId: 'cam',
+    peerId: 'cam-off',
+    signal: bus2.createAdapter('cam-off'),
+  });
+  assert(!room.camOn, 'joins with camera off by default');
+  assert(
+    (room.localMedia?.getVideoTracks() ?? []).every((t) => t.readyState !== 'live'),
+    'cam-off releases live camera tracks (LED / black-frame fix)',
+  );
+  await room.setCam(true);
+  assert(room.camOn, 'setCam(true) turns camera on');
+  assert(
+    (room.localMedia?.getVideoTracks() ?? []).some((t) => t.readyState === 'live'),
+    'setCam(true) re-acquires a live camera track',
+  );
+  await room.setCam(false);
+  assert(
+    (room.localMedia?.getVideoTracks() ?? []).every((t) => t.readyState !== 'live'),
+    'setCam(false) releases camera tracks again',
+  );
+
+  // Screen share with tab audio attaches a second outbound audio sender.
+  const sharePeer = new KapiPeer('share-remote', [], true, {
+    onIce() {},
+    onTrack() {},
+  });
+  const needReneg = await sharePeer.setShareAudioTrack(new FakeTrack('audio'));
+  assert(needReneg === true, 'first share-audio attach needs renegotiation');
+  assert(
+    (await sharePeer.setShareAudioTrack(null)) === false,
+    'clearing share audio reuses the sender',
+  );
+  sharePeer.close();
+
+  // Live identity broadcast.
+  const meta = [];
+  room.on('peer-meta', (p) => meta.push(p));
+  room.setIdentity({ displayName: 'Cam', avatarUrl: 'https://example.com/a.png' });
+  assert(meta.length === 1 && meta[0].displayName === 'Cam', 'setIdentity emits peer-meta');
+  assert(room.participants[0].displayName === 'Cam', 'participants reflect setIdentity');
+
+  await room.hangup();
+  console.log('ok: true cam-off, share-audio sender, setIdentity');
 }
 
 console.log('ok: negotiation, tracks, rejoin, reactions, hangup, mid-offer hangup');

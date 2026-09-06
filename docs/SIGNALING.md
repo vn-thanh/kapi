@@ -14,7 +14,16 @@ type SignalMessage =
   | { type: 'ice'; candidate: RTCIceCandidateInit; to: string; from?: string }
   | { type: 'reaction'; emoji: string; from?: string }
   | { type: 'peers'; peers: { peerId: string; displayName?: string; avatarUrl?: string }[] }
-  | { type: 'media-state'; peerId: string; sharing: boolean; mic?: boolean; cam?: boolean; to?: string }
+  | { type: 'peer-meta'; peerId: string; displayName?: string; avatarUrl?: string; to?: string }
+  | {
+      type: 'media-state'
+      peerId: string
+      sharing: boolean
+      mic?: boolean
+      cam?: boolean
+      shareAudio?: boolean
+      to?: string
+    }
   | { type: 'video-hint'; to: string; width: number; height: number; from?: string }
 
 interface SignalAdapter {
@@ -26,8 +35,8 @@ interface SignalAdapter {
 ## Server relay rules
 
 1. Auth + room membership check
-2. Direct messages when `to` is set (`offer` / `answer` / `ice` / `video-hint` / targeted `media-state`)
-3. Broadcast `join` / `leave` / `reaction` / `media-state` (no `to`) to other members
+2. Direct messages when `to` is set (`offer` / `answer` / `ice` / `video-hint` / targeted `media-state` / targeted `peer-meta`)
+3. Broadcast `join` / `leave` / `reaction` / `media-state` / `peer-meta` (no `to`) to other members
 4. **Send `peers` snapshot to the joiner** (required for mesh). kapi makes the
    joiner offer to each listed peer; existing peers treat `join` as presence only.
    Do not also have existing peers offer on `join` — that causes glare with 3+ peers.
@@ -37,11 +46,15 @@ interface SignalAdapter {
    ghosts when it is lost.
 
 `media-state` is a cosmetic hint (mic/camera toggles and screen share
-started/stopped) that lets remote UIs show mute chips and give the sharer's
+started/stopped, plus optional `shareAudio` when the share includes tab/system
+audio) that lets remote UIs show mute chips and give the sharer's
 tile stage placement. Relays that drop unknown message types don't break media
 — only the indicators are lost — but forwarding it (broadcast, or targeted
-when `to` is set) keeps the UI correct. `mic` / `cam` are optional (`true` =
-on) so older senders that only set `sharing` still parse.
+when `to` is set) keeps the UI correct. `mic` / `cam` / `shareAudio` are optional
+(`true` = on) so older senders that only set `sharing` still parse.
+
+`peer-meta` updates `displayName` / `avatarUrl` after join (`room.setIdentity`).
+Forward it like `media-state`; dropping it only freezes the roster label/avatar.
 
 `video-hint` is likewise cosmetic: it tells the sender how large its video
 renders on the receiver's screen so it can downscale that connection

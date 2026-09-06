@@ -15,7 +15,8 @@
     "./ui": {
       "types": "./dist/ui/index.d.ts",
       "import": "./dist/ui/index.js"
-    }
+    },
+    "./background.worker.js": "./dist/background.worker.js"
   },
   "files": [
     "dist",

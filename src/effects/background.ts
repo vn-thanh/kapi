@@ -9,9 +9,12 @@ export type BackgroundProcessorOptions = {
 type ImageSegmenter = import('@mediapipe/tasks-vision').ImageSegmenter;
 type ImageSegmenterResult = import('@mediapipe/tasks-vision').ImageSegmenterResult;
 
+type WorkerMode = 'blur' | 'remove' | 'image';
+
 /**
  * Camera → MediaPipe selfie mask → canvas composite → captureStream.
- * ponytail: one segmenter on the main thread; move to Worker if FPS drops.
+ * Prefers a module Worker (OffscreenCanvas) when available; falls back to the
+ * main-thread segmenter so older browsers and failed worker loads still work.
  *
  * MediaPipe is loaded lazily on first background effect so bare-module demos
  * can join a call without an import map until blur/remove is used.
@@ -23,20 +26,9 @@ type ImageSegmenterResult = import('@mediapipe/tasks-vision').ImageSegmenterResu
  * inferences with colliding timestamps, and leaked encoder tracks.
  */
 export class BackgroundProcessor {
-  private segmenter: ImageSegmenter | null = null;
-  private segmenterReady: Promise<ImageSegmenter> | null = null;
   private video: HTMLVideoElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
-  /** Scratch compositing layers — the mask arrives small (e.g. 256×256) and is
-   *  scaled by drawImage, so per-pixel JS compositing is unnecessary. */
-  private maskCanvas: HTMLCanvasElement | null = null;
-  private maskCtx: CanvasRenderingContext2D | null = null;
-  /** Raster target for the mask — reused across frames; the mask size is
-   *  model-fixed, so a fresh one per frame at 30fps was pure GC churn. */
-  private maskImageData: ImageData | null = null;
-  private personCanvas: HTMLCanvasElement | null = null;
-  private personCtx: CanvasRenderingContext2D | null = null;
   private outStream: MediaStream | null = null;
   private raf = 0;
   private mode: BackgroundMode = 'none';
@@ -48,15 +40,98 @@ export class BackgroundProcessor {
   /** Bumped by stop() so a model load it interrupted can be detected. */
   private generation = 0;
 
+  /** Main-thread MediaPipe (fallback). */
+  private segmenter: ImageSegmenter | null = null;
+  private segmenterReady: Promise<ImageSegmenter> | null = null;
+  private maskCanvas: HTMLCanvasElement | null = null;
+  private maskCtx: CanvasRenderingContext2D | null = null;
+  private maskImageData: ImageData | null = null;
+  private personCanvas: HTMLCanvasElement | null = null;
+  private personCtx: CanvasRenderingContext2D | null = null;
+
+  /** Worker path. */
+  private worker: Worker | null = null;
+  private workerReady: Promise<boolean> | null = null;
+  private useWorker = false;
+  private frameId = 0;
+  private pendingFrame = false;
+
   constructor(opts: BackgroundProcessorOptions = {}) {
     this.modelUrl = opts.modelUrl ?? DEFAULT_MODEL_URL;
     this.blurAmount = opts.blurAmount ?? 12;
   }
 
+  private spawnWorker(): Worker | null {
+    if (typeof Worker === 'undefined') return null;
+    const name = 'background.worker.js';
+    // Core bundle lives at dist/; UI bundle at dist/ui/ — try both relatives.
+    const bases = [import.meta.url];
+    for (const base of bases) {
+      for (const rel of [`./${name}`, `../${name}`]) {
+        try {
+          return new Worker(new URL(rel, base), { type: 'module' });
+        } catch {
+          // try next candidate
+        }
+      }
+    }
+    return null;
+  }
+
+  private async ensureWorker(): Promise<boolean> {
+    if (this.useWorker && this.worker) return true;
+    if (this.workerReady) return this.workerReady;
+    this.workerReady = (async () => {
+      const worker = this.spawnWorker();
+      if (!worker) return false;
+      const ok = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), 4000);
+        worker.onmessage = (ev: MessageEvent<{ type?: string; message?: string }>) => {
+          if (ev.data?.type === 'ready') {
+            // Script loaded — kick off model init; model-ready confirms it.
+            worker.postMessage({
+              type: 'init',
+              modelUrl: this.modelUrl,
+              blurAmount: this.blurAmount,
+            });
+          } else if (ev.data?.type === 'model-ready') {
+            clearTimeout(timer);
+            resolve(true);
+          } else if (ev.data?.type === 'error') {
+            clearTimeout(timer);
+            resolve(false);
+          }
+        };
+        worker.onerror = () => {
+          clearTimeout(timer);
+          resolve(false);
+        };
+      });
+      if (!ok) {
+        worker.terminate();
+        return false;
+      }
+      this.worker = worker;
+      this.useWorker = true;
+      worker.onmessage = (ev: MessageEvent<{ type?: string; id?: number; bitmap?: ImageBitmap }>) => {
+        if (ev.data?.type === 'frame' && ev.data.bitmap && this.ctx && this.canvas) {
+          this.ctx.drawImage(ev.data.bitmap, 0, 0);
+          ev.data.bitmap.close();
+          this.pendingFrame = false;
+        } else if (ev.data?.type === 'error') {
+          this.pendingFrame = false;
+        }
+      };
+      return true;
+    })();
+    const result = await this.workerReady;
+    if (!result) this.workerReady = null;
+    return result;
+  }
+
   private async ensureSegmenter(): Promise<ImageSegmenter | null> {
     if (this.segmenter) return this.segmenter;
     const gen = this.generation;
-    // Dedupe concurrent starts so the wasm/model loads exactly once.
     this.segmenterReady ??= (async () => {
       const { FilesetResolver, ImageSegmenter } = await import('@mediapipe/tasks-vision');
       const vision = await FilesetResolver.forVisionTasks(
@@ -68,14 +143,6 @@ export class BackgroundProcessor {
           delegate: 'GPU',
         },
         runningMode: 'VIDEO',
-        // Confidence masks, not the category mask: for single-channel selfie
-        // models MediaPipe emits the FOREGROUND (person) probability in
-        // confidence channel 0, while the *category* mask is the inverted one
-        // (person = 0, background = 255 — MediaPipe's own postprocessor maps
-        // `0.5 as the cutoff, assigning 0 (foreground) or 255 (background)`,
-        // segmentation_postprocessor_gl.cc / tensors_to_segmentation_calculator.cc).
-        // Basing the composite on the category mask blurred the person
-        // instead of the background.
         outputCategoryMask: false,
         outputConfidenceMasks: true,
       });
@@ -85,20 +152,23 @@ export class BackgroundProcessor {
     try {
       seg = await pending;
     } catch (err) {
-      // A failed load must not poison the dedupe slot — retry next time.
       if (this.segmenterReady === pending) this.segmenterReady = null;
       throw err;
     }
     if (this.segmenterReady === pending) this.segmenterReady = null;
-    if (this.segmenter) return this.segmenter; // a concurrent call adopted it
+    if (this.segmenter) return this.segmenter;
     if (gen !== this.generation) {
-      // stop() ran while the model was loading — without closing here the
-      // segmenter is unreachable and leaks (GPU wasm instance).
       seg.close();
       return null;
     }
     this.segmenter = seg;
     return this.segmenter;
+  }
+
+  private workerMode(mode: BackgroundMode): WorkerMode {
+    if (mode === 'blur') return 'blur';
+    if (typeof mode === 'object') return 'image';
+    return 'remove';
   }
 
   async start(source: MediaStream, mode: BackgroundMode): Promise<MediaStream> {
@@ -109,9 +179,16 @@ export class BackgroundProcessor {
       this.bgImage = null;
     }
 
-    const seg = await this.ensureSegmenter();
-    // stop() interrupted the model load — bail with audio-only.
-    if (!seg) return new MediaStream(source.getAudioTracks());
+    const workerOk = await this.ensureWorker();
+    if (!workerOk) {
+      const seg = await this.ensureSegmenter();
+      if (!seg) return new MediaStream(source.getAudioTracks());
+    } else if (this.worker && this.bgImage) {
+      const bmp = await createImageBitmap(this.bgImage);
+      this.worker.postMessage({ type: 'setBgImage', bitmap: bmp }, { transfer: [bmp] });
+    } else if (this.worker) {
+      this.worker.postMessage({ type: 'setBgImage', bitmap: null });
+    }
 
     if (!this.video) {
       this.video = document.createElement('video');
@@ -122,9 +199,6 @@ export class BackgroundProcessor {
     await this.video.play();
     await waitForVideoDimensions(this.video);
 
-    // stop() (mode reset to 'none', hangup) can null the element while the
-    // awaits above were pending — bail with audio-only instead of reading
-    // videoWidth off null; the room's seq token discards the stale output.
     if (!this.video) return new MediaStream(source.getAudioTracks());
 
     const w = this.video.videoWidth || 640;
@@ -136,14 +210,13 @@ export class BackgroundProcessor {
     this.canvas.width = w;
     this.canvas.height = h;
 
-    // Retire the previous output — its capture track would keep encoding an
-    // abandoned canvas otherwise.
     if (this.outStream) {
       for (const t of this.outStream.getVideoTracks()) t.stop();
       this.outStream = null;
     }
 
     this.lastTs = -1;
+    this.pendingFrame = false;
     this.startLoop();
 
     const fps = 30;
@@ -157,8 +230,15 @@ export class BackgroundProcessor {
     this.mode = mode;
     if (typeof mode === 'object' && mode.image) {
       this.bgImage = await loadImage(mode.image);
+      if (this.worker && this.useWorker) {
+        const bmp = await createImageBitmap(this.bgImage);
+        this.worker.postMessage({ type: 'setBgImage', bitmap: bmp }, { transfer: [bmp] });
+      }
     } else {
       this.bgImage = null;
+      if (this.worker && this.useWorker) {
+        this.worker.postMessage({ type: 'setBgImage', bitmap: null });
+      }
     }
   }
 
@@ -181,6 +261,17 @@ export class BackgroundProcessor {
       if (t.kind === 'video') t.stop();
     });
     this.outStream = null;
+    if (this.worker) {
+      try {
+        this.worker.postMessage({ type: 'close' });
+      } catch {
+        // ignore
+      }
+      this.worker.terminate();
+      this.worker = null;
+    }
+    this.workerReady = null;
+    this.useWorker = false;
     this.segmenter?.close();
     this.segmenter = null;
     this.segmenterReady = null;
@@ -199,11 +290,9 @@ export class BackgroundProcessor {
   }
 
   private loop = () => {
-    const { video, canvas, segmenter } = this;
-    if (!this.running || !video || !canvas || !this.ctx || !segmenter) return;
+    const { video, canvas } = this;
+    if (!this.running || !video || !canvas || !this.ctx) return;
     const now = performance.now();
-    // Skip until the element has a real frame — MediaPipe GPU path throws
-    // "texImage2D: no video" when width/height are still 0.
     if (
       video.readyState >= 2 &&
       video.videoWidth > 0 &&
@@ -215,9 +304,41 @@ export class BackgroundProcessor {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
       }
-      try {
-        segmenter.segmentForVideo(video, now, (result) => this.paint(result));
-      } catch {
+
+      if (this.useWorker && this.worker) {
+        if (!this.pendingFrame && this.mode !== 'none') {
+          this.pendingFrame = true;
+          const id = ++this.frameId;
+          void createImageBitmap(video)
+            .then((bitmap) => {
+              if (!this.running || !this.worker || !this.useWorker) {
+                bitmap.close();
+                this.pendingFrame = false;
+                return;
+              }
+              this.worker.postMessage(
+                {
+                  type: 'frame',
+                  id,
+                  bitmap,
+                  mode: this.workerMode(this.mode),
+                  ts: now,
+                },
+                { transfer: [bitmap] },
+              );
+            })
+            .catch(() => {
+              this.pendingFrame = false;
+              this.ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
+            });
+        }
+      } else if (this.segmenter) {
+        try {
+          this.segmenter.segmentForVideo(video, now, (result) => this.paint(result));
+        } catch {
+          this.ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        }
+      } else {
         this.ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       }
     }
@@ -235,7 +356,6 @@ export class BackgroundProcessor {
       return;
     }
 
-    // 1. Paint the replacement background.
     if (this.mode === 'blur') {
       ctx.save();
       ctx.filter = `blur(${this.blurAmount}px)`;
@@ -244,17 +364,10 @@ export class BackgroundProcessor {
     } else if (typeof this.mode === 'object' && this.bgImage) {
       ctx.drawImage(this.bgImage, 0, 0, w, h);
     } else {
-      // remove → neutral dark backdrop
       ctx.fillStyle = '#101010';
       ctx.fillRect(0, 0, w, h);
     }
 
-    // 2. Rasterize the person's confidence into an alpha channel. Channel 0
-    //    holds the FOREGROUND (person) probability for single-channel selfie
-    //    models; multi-channel models (multiclass selfie, deeplab) list
-    //    background first, so the person is the max of the remaining
-    //    channels. The float confidence doubles as soft alpha — smoother
-    //    person edges than the binary category mask.
     if (!this.maskCanvas) {
       this.maskCanvas = document.createElement('canvas');
       this.maskCtx = this.maskCanvas.getContext('2d');
@@ -269,15 +382,11 @@ export class BackgroundProcessor {
         ? this.maskImageData
         : (this.maskImageData = this.maskCtx!.createImageData(mw, mh));
     if (masks.length === 1) {
-      // Single-channel selfie models: channel 0 = person (foreground)
-      // probability — the common case, kept allocation-free.
       const ch = masks[0]!.getAsFloat32Array();
       for (let i = 0; i < ch.length; i++) {
         maskRgba.data[i * 4 + 3] = Math.min(1, Math.max(0, ch[i]!)) * 255;
       }
     } else {
-      // Multiclass (multiclass selfie, deeplab): background is channel 0;
-      // person = any other class.
       const channels = masks.map((m) => m.getAsFloat32Array());
       for (let i = 0; i < channels[0]!.length; i++) {
         let person = 0;
@@ -290,9 +399,6 @@ export class BackgroundProcessor {
     }
     this.maskCtx!.putImageData(maskRgba, 0, 0);
 
-    // 3. Composite the person over the background via GPU-accelerated
-    //    drawImage + destination-in (replaces the old full-resolution
-    //    per-pixel JS merge).
     if (!this.personCanvas) {
       this.personCanvas = document.createElement('canvas');
       this.personCtx = this.personCanvas.getContext('2d');
