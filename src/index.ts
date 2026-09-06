@@ -24,6 +24,21 @@ export {
   resolveConnectionQuality,
 } from './options';
 export type { ResolvedConnectionQuality } from './options';
+export {
+  loadPreferences,
+  savePreferences,
+  patchPreferences,
+  normalizePreferences,
+  withPreferredDevice,
+  deviceIdFromConstraint,
+  DEFAULT_PREFERENCES_KEY,
+  EMPTY_PREFERENCES,
+} from './preferences';
+export type {
+  KapiUserPreferences,
+  KapiPreferencesOptions,
+  PersistedBackgroundMode,
+} from './preferences';
 export type {
   BackgroundMode,
   SignalAdapter,

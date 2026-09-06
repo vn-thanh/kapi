@@ -34,7 +34,7 @@ export class BackgroundProcessor {
   private mode: BackgroundMode = 'none';
   private bgImage: HTMLImageElement | null = null;
   private running = false;
-  private readonly blurAmount: number;
+  private blurAmount: number;
   private readonly modelUrl: string;
   private lastTs = -1;
   /** Bumped by stop() so a model load it interrupted can be detected. */
@@ -59,6 +59,12 @@ export class BackgroundProcessor {
   constructor(opts: BackgroundProcessorOptions = {}) {
     this.modelUrl = opts.modelUrl ?? DEFAULT_MODEL_URL;
     this.blurAmount = opts.blurAmount ?? 12;
+  }
+
+  /** Live-update blur strength (main thread + worker). */
+  setBlurAmount(amount: number) {
+    this.blurAmount = Math.max(1, Math.min(40, Math.round(amount)));
+    this.worker?.postMessage({ type: 'set-blur', blurAmount: this.blurAmount });
   }
 
   private spawnWorker(): Worker | null {

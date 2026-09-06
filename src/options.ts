@@ -29,14 +29,15 @@ export const DEFAULT_VIDEO: MediaTrackConstraints = {
 export const DEFAULT_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
 
+/** Default chrome: frequent in-call actions + Settings (layout / background
+ *  live there). Hosts can still add `'layout'` / `'background'` for one-tap
+ *  shortcuts via `toolbar`. */
 export const DEFAULT_TOOLBAR: ToolbarButton[] = [
   'mic',
   'cam',
   'share',
   'react',
   'participants',
-  'layout',
-  'background',
   'settings',
   'hangup',
 ];
@@ -78,6 +79,24 @@ export const DEFAULT_LABELS: Required<KapiUiLabels> = {
   unpin: 'Unpin tile',
   microphone: 'Microphone',
   camera: 'Camera',
+  speaker: 'Speaker',
+  noSpeaker: 'No speaker found',
+  speakerUnsupported: 'Speaker selection is not supported in this browser.',
+  settingsAudio: 'Audio',
+  settingsVideo: 'Video',
+  settingsEffects: 'Effects',
+  settingsGeneral: 'General',
+  settingsClose: 'Close settings',
+  videoFit: 'Video fit',
+  videoFitContain: 'Fit',
+  videoFitCover: 'Fill',
+  blurAmount: 'Blur strength',
+  defaultLayout: 'Default view',
+  layoutGridShort: 'Grid',
+  layoutSpotlightShort: 'Spotlight',
+  layoutSidebarShort: 'Sidebar',
+  shortcutsToggle: 'Keyboard shortcuts',
+  shortcutsHint: 'M mute · V camera (while the call is focused)',
   muted: 'Muted',
   you: 'You',
   enableSound: 'Tap to enable sound',

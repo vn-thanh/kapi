@@ -29,10 +29,13 @@ window.handles = [
   mount(document.getElementById('a'), {
     roomId: 'layout-check', peerId: 'p1', displayName: 'Ada',
     signal: createBroadcastSignalAdapter('layout-check', 'p1'),
+    // Explicit shortcuts — not in DEFAULT_TOOLBAR (Settings owns these).
+    toolbar: ['mic','cam','share','react','participants','layout','background','settings','hangup'],
   }),
   mount(document.getElementById('b'), {
     roomId: 'layout-check', peerId: 'p2', displayName: 'Bob',
     signal: createBroadcastSignalAdapter('layout-check', 'p2'),
+    toolbar: ['mic','cam','share','react','participants','layout','background','settings','hangup'],
   }),
 ];
 </script></body></html>`;
@@ -127,7 +130,7 @@ async function main() {
 
     // 1. default grid: all tiles in .kapi-grid, no mode class
     let s = await state(0);
-    assert.equal(s.layoutButton, true, 'layout button present by default');
+    assert.equal(s.layoutButton, true, 'layout button present when requested in toolbar');
     assert.deepEqual(s.modes, [], 'no layout mode class initially');
     assert.equal(s.grid, 2, 'grid holds both tiles');
     assert.equal(s.gridVisible, true, 'grid visible in grid mode');

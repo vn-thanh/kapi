@@ -9,6 +9,7 @@ import type {
   SignalPeer,
 } from '../types';
 import { BackgroundProcessor } from '../effects/background';
+import { deviceIdFromConstraint } from '../preferences/storage';
 import { getDisplayStream, getLocalStream } from './media';
 import { KapiPeer } from './peer';
 
@@ -58,6 +59,11 @@ export class KapiRoom {
 
   private constructor(opts: KapiRoomOptions) {
     this.options = resolveRoomOptions(opts);
+    // Seed preferred devices from constraints so re-acquire after stop
+    // (setCam/setMic) remembers the user's last pick across a session —
+    // and across reloads when the host/UI injects saved deviceIds.
+    this.preferredAudioDeviceId = deviceIdFromConstraint(this.options.media?.audio);
+    this.preferredVideoDeviceId = deviceIdFromConstraint(this.options.media?.video);
   }
 
   static async join(opts: KapiRoomOptions): Promise<KapiRoom> {
@@ -1053,6 +1059,13 @@ export class KapiRoom {
     }
     this.applyCamState();
     this.emit('local-stream', { stream: this.localStream });
+  }
+
+  /** Update blur strength; applies immediately when a blur effect is running. */
+  setBlurAmount(amount: number) {
+    const n = Math.max(1, Math.min(40, Math.round(amount)));
+    if (this.options.effects) this.options.effects.blurAmount = n;
+    this.background?.setBlurAmount(n);
   }
 
   /**

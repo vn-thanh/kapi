@@ -7,6 +7,7 @@ type Mode = 'blur' | 'remove' | 'image';
 
 type InMsg =
   | { type: 'init'; modelUrl: string; blurAmount: number }
+  | { type: 'set-blur'; blurAmount: number }
   | { type: 'frame'; id: number; bitmap: ImageBitmap; mode: Mode; ts: number }
   | { type: 'setBgImage'; bitmap: ImageBitmap | null }
   | { type: 'close' };
@@ -45,6 +46,9 @@ async function handle(msg: InMsg) {
       blurAmount = msg.blurAmount;
       await ensureSegmenter(msg.modelUrl);
       self.postMessage({ type: 'model-ready' });
+      break;
+    case 'set-blur':
+      blurAmount = msg.blurAmount;
       break;
     case 'setBgImage':
       bgImage?.close();

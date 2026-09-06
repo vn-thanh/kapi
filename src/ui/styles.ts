@@ -96,9 +96,13 @@ export function injectStyles() {
 }
 
 /* ---------- layout modes ----------
-   grid (default): every tile lives in .kapi-grid.
+   grid (default): every tile lives in .kapi-grid (equal cells). Pinning a
+   tile (or a screen share) flips on .layout-focus — same stage + bottom
+   filmstrip chrome as spotlight, without leaving grid mode.
    spotlight: featured tile fills .kapi-stage, everyone else in a bottom
-   filmstrip. sidebar: same stage, filmstrip as a right-hand column. */
+   filmstrip. sidebar: same stage, filmstrip as a right-hand column.
+   .layout-solo: no filmstrip peers — hide the empty strip so the stage
+   (or lone tile) uses the full area. */
 .kapi-main {
   flex: 1;
   display: flex;
@@ -112,11 +116,13 @@ export function injectStyles() {
   min-width: 0;
 }
 .kapi-root.layout-spotlight .kapi-grid,
-.kapi-root.layout-sidebar .kapi-grid {
+.kapi-root.layout-sidebar .kapi-grid,
+.kapi-root.layout-focus .kapi-grid {
   display: none;
 }
 .kapi-root.layout-spotlight .kapi-stage,
-.kapi-root.layout-sidebar .kapi-stage {
+.kapi-root.layout-sidebar .kapi-stage,
+.kapi-root.layout-focus .kapi-stage {
   display: grid;
   flex: 1;
   padding: 12px;
@@ -124,7 +130,8 @@ export function injectStyles() {
 .kapi-stage > .kapi-tile {
   grid-area: 1 / 1;
 }
-.kapi-root.layout-spotlight .kapi-strip {
+.kapi-root.layout-spotlight .kapi-strip,
+.kapi-root.layout-focus .kapi-strip {
   display: flex;
   flex-direction: row;
   gap: 10px;
@@ -132,7 +139,8 @@ export function injectStyles() {
   height: clamp(96px, 18vh, 160px);
   overflow-x: auto;
 }
-.kapi-root.layout-spotlight .kapi-strip .kapi-tile {
+.kapi-root.layout-spotlight .kapi-strip .kapi-tile,
+.kapi-root.layout-focus .kapi-strip .kapi-tile {
   /* Fixed-ratio thumbs (Zoom/Meet filmstrip) — stretching to fill the strip
      used to produce huge letterboxed tiles when few peers were present. */
   flex: none;
@@ -154,6 +162,18 @@ export function injectStyles() {
   flex: none;
   width: 100%;
   aspect-ratio: 16 / 9;
+}
+/* Alone (or focus with nobody left in the strip): don't reserve filmstrip. */
+.kapi-root.layout-solo .kapi-strip {
+  display: none !important;
+  height: 0 !important;
+  width: 0 !important;
+  padding: 0 !important;
+  overflow: hidden;
+  border: none;
+}
+.kapi-root.layout-solo.layout-sidebar .kapi-main {
+  flex-direction: column;
 }
 .kapi-tile.video-off video {
   opacity: 0;
@@ -536,6 +556,147 @@ export function injectStyles() {
   z-index: 4;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
 }
+.kapi-panel.kapi-settings {
+  width: min(360px, 92%);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.kapi-panel.kapi-settings.hidden {
+  display: none;
+}
+.kapi-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 14px 0;
+}
+.kapi-settings-header h3 {
+  margin: 0;
+}
+.kapi-settings-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+}
+.kapi-settings-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.kapi-settings-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 10px 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-x: auto;
+}
+.kapi-settings-tab {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 6px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.kapi-settings-tab:hover {
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.04);
+}
+.kapi-settings-tab[aria-selected='true'] {
+  color: #fff;
+  border-bottom-color: var(--kapi-accent, #3b82f6);
+}
+.kapi-settings-body {
+  padding: 12px 14px 14px;
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.kapi-settings-pane[hidden] {
+  display: none;
+}
+.kapi-settings-field {
+  display: block;
+  margin-bottom: 12px;
+}
+.kapi-settings-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.45);
+}
+.kapi-settings-value {
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.9);
+}
+.kapi-settings-segment {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.kapi-settings-chip {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  color: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.kapi-settings-chip:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.kapi-settings-chip.is-active {
+  border-color: color-mix(in srgb, var(--kapi-accent, #3b82f6) 65%, transparent);
+  background: color-mix(in srgb, var(--kapi-accent, #3b82f6) 22%, transparent);
+  color: #fff;
+}
+.kapi-settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 8px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.kapi-settings-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--kapi-accent, #3b82f6);
+}
+.kapi-device-label {
+  display: block;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+}
+.kapi-device input[type='range'] {
+  width: 100%;
+  margin-top: 8px;
+  accent-color: var(--kapi-accent, #3b82f6);
+}
 .kapi-panel.hidden {
   display: none;
 }
@@ -630,6 +791,10 @@ export function injectStyles() {
 }
 .kapi-device select:focus-visible {
   outline: 2px solid var(--kapi-accent, #3b82f6);
+}
+.kapi-device select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* ---------- reactions (Jitsi-style) ---------- */

@@ -92,6 +92,8 @@ may renegotiate peers.
 {
   ...roomOptions
   toolbar?: Array<'mic'|'cam'|'share'|'react'|'participants'|'layout'|'background'|'settings'|'hangup'>
+    // Default omits layout/background — those live in Settings.
+    // Pass them here for one-tap toolbar shortcuts.
   layout?: 'grid' | 'spotlight' | 'sidebar'  // default 'grid' — initial tile layout.
                                              // Switch at runtime via the 'layout'
                                              // toolbar button (cycles) or
@@ -129,26 +131,52 @@ may renegotiate peers.
                            // 👍 ❤️ 😂 😮 😢 🎉 👏 👎). Trimmed; empties and
                            // entries over 24 chars are dropped (matching the
                            // sendReaction wire cap); max 16 shown.
+  preferences?: {
+    enabled?: boolean      // default true — remember devices / layout /
+                           // background mode / video fit / shortcuts in
+                           // localStorage (key default 'kapi.prefs.v1').
+                           // Explicit host options still win when set.
+                           // Custom image backgrounds are session-only.
+    key?: string
+    onChange?: (prefs: KapiUserPreferences) => void
+  }
   onHangup?: () => void
   onReady?: (room: KapiRoom) => void
   onError?: (error: Error) => void
 }
 ```
 
+### Settings UI
+
+The built-in **Settings** panel is a Zoom/Meet-style dialog with tabs:
+
+| Tab | Controls |
+|-----|----------|
+| Audio | Microphone, speaker (`setSinkId` when supported) |
+| Video | Camera, video fit (contain / cover) |
+| Effects | Background (none / blur / remove / image), blur strength |
+| General | Default layout, keyboard shortcuts toggle |
+
+Choices persist across reloads when `preferences.enabled` is on (the default).
+The toolbar background picker remains a quick shortcut and writes the same store.
+
 ### Built-in layout interactions
 
-- **View button** (toolbar `'layout'`) cycles `grid → spotlight → sidebar`.
+- **View** — switch `grid → spotlight → sidebar` from Settings → General (or add toolbar `'layout'` to cycle with one tap).
+- **Background** — Settings → Effects (or toolbar `'background'` for a quick picker).
+- **Click / pin a tile** — in grid, enlarges that peer (stage + filmstrip);
+  in spotlight/sidebar, wins the stage over the active speaker. Click again to unpin.
+  Screen shares always take the stage.
+- **Active speaker** — spotlight/sidebar follow the loudest peer when nothing
+  is pinned (Zoom Speaker view). Grid stays equal-tiles and only rings the
+  speaking tile — auto-jumping Gallery would feel jumpy.
+- **Alone** — spotlight/sidebar/focus hide the empty filmstrip so your tile fills
+  the area.
 - **Keyboard shortcuts** (`shortcuts`, default on): `M` toggles the mic, `V`
   toggles the camera — Jitsi-style, scoped to the mounted UI.
 - **Narrow toolbar**: controls that don't fit move into a ⋯ More menu
   (mic, camera and hangup stay on the bar). Override the label with
   `labels.more`.
-- **Click a tile** (or focus it and press Enter/Space) to **pin** that peer —
-  the pinned tile takes the spotlight/sidebar stage. Click again to unpin.
-- **Active speaker**: the built-in UI listens to audio levels (WebAudio RMS)
-  and rings the speaking tile; in spotlight/sidebar the stage follows the
-  dominant speaker while nothing is pinned.
-- **Screen share always wins the stage** in every layout.
 - **Connection quality bars** on remote tiles (and the participant roster)
   when `connectionQualityUi` is `'bars'`.
 

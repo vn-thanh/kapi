@@ -274,6 +274,33 @@ export interface KapiUiLabels {
   /** Settings-panel select titles. */
   microphone?: string;
   camera?: string;
+  /** Audio-output (speaker) select title. */
+  speaker?: string;
+  /** Empty speaker list / unsupported sink. */
+  noSpeaker?: string;
+  /** Hint when `setSinkId` is unavailable. */
+  speakerUnsupported?: string;
+  /** Settings dialog tabs. */
+  settingsAudio?: string;
+  settingsVideo?: string;
+  settingsEffects?: string;
+  settingsGeneral?: string;
+  /** Close button aria-label in the settings dialog. */
+  settingsClose?: string;
+  /** Video fit control (contain vs cover). */
+  videoFit?: string;
+  videoFitContain?: string;
+  videoFitCover?: string;
+  /** Blur strength slider. */
+  blurAmount?: string;
+  /** Default layout control in General. */
+  defaultLayout?: string;
+  layoutGridShort?: string;
+  layoutSpotlightShort?: string;
+  layoutSidebarShort?: string;
+  /** Keyboard shortcuts toggle. */
+  shortcutsToggle?: string;
+  shortcutsHint?: string;
   /** Aria label for the muted-mic chip (tile + participant roster). */
   muted?: string;
   you?: string;
@@ -320,6 +347,12 @@ export interface KapiMountOptions extends KapiRoomOptions {
    * picker shows at most 16.
    */
   reactions?: string[];
+  /**
+   * Remember devices, layout, background mode, video fit, and shortcuts in
+   * `localStorage` (Zoom/Meet style). Explicit host options still win when set.
+   * Pass `{ enabled: false }` to keep the tabbed Settings UI without persistence.
+   */
+  preferences?: import('./preferences/types').KapiPreferencesOptions;
   onHangup?: () => void;
   onReady?: (room: import('./core/room').KapiRoom) => void;
   onError?: (error: Error) => void;

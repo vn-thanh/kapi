@@ -181,17 +181,17 @@ Full payloads: [docs/OPTIONS.md](docs/OPTIONS.md#room-events-roomonevent-handler
 
 `mount(parent, options)` renders a complete meeting experience into any element:
 
-- **Toolbar** — `mic · cam · share · react · participants · layout · background · settings · hangup` (pick any subset via `toolbar`). On a narrow chrome the extras collapse into a ⋯ More menu; mic, camera and leave stay on the bar
+- **Toolbar** — default `mic · cam · share · react · participants · settings · hangup` (layout / background live in Settings; add them via `toolbar` for one-tap shortcuts). On a narrow chrome the extras collapse into a ⋯ More menu; mic, camera and leave stay on the bar
 - **Background picker** — the background button opens a pill with `None / Blur / Remove / Image…`; `Image…` picks a local picture applied as a virtual background via `setBackground({ image })`
 - **Three layouts** — switch live with the view button or `handle.setLayout()`:
 
 | Layout | Behaviour |
 |---|---|
-| `grid` *(default)* | Equal tiles, active-speaker ring on whoever is talking |
-| `spotlight` | One featured tile on a stage + bottom filmstrip |
-| `sidebar` | Stage + right-hand filmstrip column |
+| `grid` *(default)* | Equal tiles + speaking ring; click a tile to enlarge it |
+| `spotlight` | Featured stage + bottom filmstrip; follows active speaker |
+| `sidebar` | Stage + right filmstrip; follows active speaker |
 
-- **Pin any tile** by clicking it — the stage follows your pin; unpin to return to active-speaker mode
+- **Pin any tile** by clicking it — enlarges in grid; holds the stage in spotlight/sidebar. Unpin to restore equal grid / active-speaker follow. Alone, the empty filmstrip is hidden.
 - **Keyboard shortcuts** — `M` mutes, `V` toggles the camera (Jitsi-style; opt out with `shortcuts: false`)
 - **Screen share always wins the stage**, rendered uncropped (`contain`) so shared content stays readable
 - **Theme with CSS variables** — `theme: { accent: '#e11d48', bg: '#0b0f14', … }`

@@ -1,5 +1,12 @@
 import { KapiRoom } from '../core/room';
-import { DEFAULT_LABELS, DEFAULT_THEME, DEFAULT_TOOLBAR, resolveConnectionQuality } from '../options';
+import { DEFAULT_LABELS, DEFAULT_THEME, DEFAULT_TOOLBAR, DEFAULT_VIDEO, resolveConnectionQuality } from '../options';
+import {
+  DEFAULT_PREFERENCES_KEY,
+  loadPreferences,
+  patchPreferences,
+  withPreferredDevice,
+} from '../preferences';
+import type { PersistedBackgroundMode } from '../preferences';
 import type {
   BackgroundMode,
   ConnectionQuality,
@@ -11,6 +18,7 @@ import type {
   ToolbarButton,
 } from '../types';
 import { toolbarIconHtml, statusIconHtml } from './icons';
+import { createSettingsPanel } from './settings';
 import { createSpeakerWatcher } from './speaker';
 import { injectStyles } from './styles';
 
@@ -83,23 +91,74 @@ function supportsFrameCallback(): boolean {
 
 export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMountHandle {
   injectStyles();
-  const theme = { ...DEFAULT_THEME, ...options.theme };
-  const labels = { ...DEFAULT_LABELS, ...options.labels };
-  const toolbarBtns = options.toolbar?.length ? options.toolbar : DEFAULT_TOOLBAR;
-  const selfId = options.peerId;
-  const selfName = options.displayName?.trim() || labels.you;
-  const cqResolved = resolveConnectionQuality(options.connectionQuality);
+
+  // ---------- preferences (localStorage) ----------
+  const prefsOpts = options.preferences;
+  const prefsEnabled = prefsOpts?.enabled !== false;
+  const prefsKey = prefsOpts?.key ?? DEFAULT_PREFERENCES_KEY;
+  const saved = prefsEnabled ? loadPreferences(prefsKey) : null;
+
+  const persist = (patch: Parameters<typeof patchPreferences>[0]) => {
+    if (!prefsEnabled) return;
+    const next = patchPreferences(patch, prefsKey);
+    prefsOpts?.onChange?.(next);
+  };
+
+  // Host options win when set; prefs fill the gaps (devices always merge
+  // unless the host already pinned a deviceId in constraints).
+  const resolvedLayout: KapiLayout =
+    options.layout && ['grid', 'spotlight', 'sidebar'].includes(options.layout)
+      ? options.layout
+      : saved?.ui.layout && ['grid', 'spotlight', 'sidebar'].includes(saved.ui.layout)
+        ? saved.ui.layout
+        : 'grid';
+  const resolvedFit: 'contain' | 'cover' =
+    options.videoFit ?? saved?.ui.videoFit ?? 'contain';
+  let shortcutsOn = options.shortcuts ?? saved?.ui.shortcuts ?? true;
+  const resolvedBg: BackgroundMode =
+    options.effects?.background ?? saved?.effects.background ?? 'none';
+  const resolvedBlur = options.effects?.blurAmount ?? saved?.effects.blurAmount ?? 12;
+
+  const joinMedia = {
+    ...options.media,
+    audio: withPreferredDevice(options.media?.audio ?? true, saved?.devices.audioInputId),
+    video: withPreferredDevice(
+      options.media?.video === undefined || options.media?.video === true
+        ? { ...DEFAULT_VIDEO }
+        : options.media.video,
+      saved?.devices.videoInputId,
+    ),
+  };
+  const joinOptions: KapiMountOptions = {
+    ...options,
+    layout: resolvedLayout,
+    videoFit: resolvedFit,
+    shortcuts: shortcutsOn,
+    media: joinMedia,
+    effects: {
+      ...options.effects,
+      background: resolvedBg,
+      blurAmount: resolvedBlur,
+    },
+  };
+
+  const theme = { ...DEFAULT_THEME, ...joinOptions.theme };
+  const labels = { ...DEFAULT_LABELS, ...joinOptions.labels };
+  const toolbarBtns = joinOptions.toolbar?.length ? joinOptions.toolbar : DEFAULT_TOOLBAR;
+  const selfId = joinOptions.peerId;
+  const selfName = joinOptions.displayName?.trim() || labels.you;
+  const cqResolved = resolveConnectionQuality(joinOptions.connectionQuality);
   const connUi: KapiConnectionQualityUi =
-    options.connectionQualityUi ?? (cqResolved.enabled ? 'bars' : 'dot');
-  const startMic = options.media?.startMic ?? false;
-  const startCam = options.media?.startCam ?? false;
+    joinOptions.connectionQualityUi ?? (cqResolved.enabled ? 'bars' : 'dot');
+  const startMic = joinOptions.media?.startMic ?? false;
+  const startCam = joinOptions.media?.startCam ?? false;
   const peerQuality = new Map<string, ConnectionQuality>();
 
   const root = document.createElement('div');
   root.className = 'kapi-root';
   // 'contain' (default) keeps every frame fully visible at its true aspect
   // ratio; 'cover' restores edge-to-edge cropping for camera tiles.
-  if (options.videoFit === 'cover') root.classList.add('kapi-fit-cover');
+  if (resolvedFit === 'cover') root.classList.add('kapi-fit-cover');
   for (const [key, value] of Object.entries({
     bg: theme.bg,
     fg: theme.fg,
@@ -128,10 +187,51 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   pane.className = 'kapi-panel kapi-participants hidden';
   pane.setAttribute('role', 'region');
   pane.setAttribute('aria-label', labels.participants);
-  const settingsEl = document.createElement('div');
-  settingsEl.className = 'kapi-panel kapi-settings hidden';
-  settingsEl.setAttribute('role', 'region');
-  settingsEl.setAttribute('aria-label', labels.settings);
+  let audioOutputId = saved?.devices.audioOutputId;
+  let videoFit: 'contain' | 'cover' = resolvedFit;
+  let blurAmount = resolvedBlur;
+
+  const settings = createSettingsPanel({
+    labels,
+    getRoom: () => room,
+    getBackground: () => bgMode,
+    getBlurAmount: () => blurAmount,
+    getLayout: () => layoutMode,
+    getVideoFit: () => videoFit,
+    getShortcuts: () => shortcutsOn,
+    getAudioOutputId: () => audioOutputId,
+    onDevicePick: (kind, deviceId) => {
+      if (kind === 'audioinput') persist({ devices: { audioInputId: deviceId } });
+      else persist({ devices: { videoInputId: deviceId } });
+    },
+    onAudioOutputPick: (deviceId) => {
+      audioOutputId = deviceId;
+      persist({ devices: { audioOutputId: deviceId } });
+      void applyAudioOutput(deviceId);
+    },
+    onBackground: (mode) => {
+      applyBackground(mode);
+    },
+    onBackgroundImage: (file) => {
+      if (bgImageUrl) URL.revokeObjectURL(bgImageUrl);
+      bgImageUrl = URL.createObjectURL(file);
+      applyBackground({ image: bgImageUrl });
+    },
+    onBlurAmount: (amount) => {
+      blurAmount = amount;
+      persist({ effects: { blurAmount: amount } });
+      room?.setBlurAmount(amount);
+    },
+    onLayout: (layout) => setLayout(layout),
+    onVideoFit: (fit) => setVideoFit(fit),
+    onShortcuts: (on) => {
+      shortcutsOn = on;
+      persist({ ui: { shortcuts: on } });
+    },
+    onError: (err) => reportError(err),
+    onClose: () => undefined,
+  });
+  const settingsEl = settings.el;
   const reactPanel = document.createElement('div');
   reactPanel.className = 'kapi-reaction-picker hidden';
   reactPanel.setAttribute('role', 'group');
@@ -190,7 +290,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   let soundUnlocked = false;
   let room: KapiRoom | null = null;
   let disposed = false;
-  let bgMode: BackgroundMode = options.effects?.background ?? 'none';
+  let bgMode: BackgroundMode = resolvedBg;
   /** Blob URL of the user-picked background image (revoked on re-pick). */
   let bgImageUrl: string | null = null;
   const unsubs: Array<() => void> = [];
@@ -199,8 +299,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   // ---------- layout modes (grid / spotlight / sidebar) ----------
 
   const LAYOUTS: readonly KapiLayout[] = ['grid', 'spotlight', 'sidebar'];
-  let layoutMode: KapiLayout =
-    options.layout && LAYOUTS.includes(options.layout) ? options.layout : 'grid';
+  let layoutMode: KapiLayout = resolvedLayout;
   /** Click-pinned peer — wins the spotlight/sidebar stage (after screen shares). */
   let pinnedPeer: string | null = null;
   /** Last audible peer — the auto-featured candidate when nothing is pinned. */
@@ -390,12 +489,16 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   }
 
   /** Spotlight/sidebar featured tile priority: screen share > pinned >
-   *  dominant speaker > local tile. */
+   *  dominant speaker > local tile.
+   *  Grid stays equal-tiles unless the user pins someone (or someone is
+   *  sharing) — then that tile enlarges Zoom/Meet-style. Active-speaker
+   *  auto-follow stays spotlight/sidebar only (Gallery doesn't jump). */
   function pickFeatured(): Tile | null {
     for (const t of tiles.values()) {
       if (t.wrap.classList.contains('screenshare')) return t;
     }
     if (pinnedPeer) return tiles.get(pinnedPeer) ?? null;
+    if (layoutMode === 'grid') return null;
     if (dominant) return tiles.get(dominant) ?? null;
     return tiles.get(selfId) ?? tiles.values().next().value ?? null;
   }
@@ -403,20 +506,31 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   /** Re-home tiles for the current layout mode and re-apply grid sizing.
    *  The single entry point every tile/peer/share change funnels through. */
   function applyLayout() {
+    const featured = pickFeatured();
+    // Grid + pin/share uses the same stage+filmstrip chrome as spotlight.
+    const focusInGrid = layoutMode === 'grid' && featured !== null;
+    const useStage = layoutMode !== 'grid' || focusInGrid;
+    const rest = useStage
+      ? [...tiles.values()].filter((t) => t !== featured)
+      : [];
+
     root.classList.toggle('layout-spotlight', layoutMode === 'spotlight');
     root.classList.toggle('layout-sidebar', layoutMode === 'sidebar');
-    for (const t of tiles.values()) t.wrap.classList.toggle('featured', false);
-    if (layoutMode === 'grid') {
+    root.classList.toggle('layout-focus', focusInGrid);
+    // Hide the empty filmstrip when alone (or focus with nobody left to strip).
+    root.classList.toggle('layout-solo', useStage && rest.length === 0);
+
+    for (const t of tiles.values()) t.wrap.classList.toggle('featured', t === featured);
+
+    if (!useStage) {
       grid.append(...[...tiles.values()].map((t) => t.wrap));
       sizeGrid();
       scheduleHints();
       return;
     }
-    const featured = pickFeatured();
-    for (const t of tiles.values()) t.wrap.classList.toggle('featured', t === featured);
+
     if (featured) stage.append(featured.wrap);
-    const rest = [...tiles.values()].filter((t) => t !== featured).map((t) => t.wrap);
-    if (rest.length) strip.append(...rest);
+    if (rest.length) strip.append(...rest.map((t) => t.wrap));
     // Tiles moved between stage/strip/grid sizes — re-hint the senders.
     scheduleHints();
   }
@@ -439,6 +553,27 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     const b = buttons.get('layout');
     if (b) paintButton(b, 'layout', layoutTip(mode));
     applyLayout();
+    persist({ ui: { layout: mode } });
+  }
+
+  function setVideoFit(fit: 'contain' | 'cover') {
+    if (fit === videoFit) return;
+    videoFit = fit;
+    root.classList.toggle('kapi-fit-cover', fit === 'cover');
+    persist({ ui: { videoFit: fit } });
+  }
+
+  async function applyAudioOutput(deviceId: string) {
+    const sink = deviceId || '';
+    for (const audio of remoteAudio.values()) {
+      const el = audio as HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> };
+      if (typeof el.setSinkId !== 'function') continue;
+      try {
+        await el.setSinkId(sink);
+      } catch (err) {
+        reportError(err);
+      }
+    }
   }
 
   function setPinned(peerId: string | null) {
@@ -519,8 +654,9 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     wrap.className = 'kapi-tile video-off';
     wrap.dataset.peerId = peerId;
     if (peerId === selfId) wrap.classList.add('kapi-local');
-    // Click / Enter / Space pins the peer — pinned wins the spotlight and
-    // sidebar stage. Clicking the pinned tile unpins it.
+    // Click / Enter / Space pins the peer. In grid that enlarges the tile
+    // (stage + filmstrip); in spotlight/sidebar it wins the stage over the
+    // active speaker. Click again to unpin.
     wrap.tabIndex = 0;
     wrap.setAttribute('role', 'button');
     wrap.setAttribute('aria-pressed', 'false');
@@ -767,6 +903,12 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       audio.style.display = 'none';
       root.appendChild(audio);
       remoteAudio.set(peerId, audio);
+      if (audioOutputId) {
+        const el = audio as HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> };
+        if (typeof el.setSinkId === 'function') {
+          void el.setSinkId(audioOutputId).catch(() => undefined);
+        }
+      }
     }
     if (audio.srcObject !== stream) audio.srcObject = stream;
     if (soundUnlocked) {
@@ -817,13 +959,21 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   // ---------- panels ----------
 
   function showPanel(which: 'participants' | 'settings', show: boolean) {
-    const el = which === 'participants' ? pane : settingsEl;
-    const other = which === 'participants' ? settingsEl : pane;
+    if (which === 'settings') {
+      if (show) {
+        closeOverflow();
+        pane.classList.add('hidden');
+        void settings.open();
+      } else {
+        settings.close();
+      }
+      return;
+    }
     if (show) {
       closeOverflow();
-      other.classList.add('hidden');
+      settings.close();
     }
-    el.classList.toggle('hidden', !show);
+    pane.classList.toggle('hidden', !show);
   }
 
   // ---------- reactions (Jitsi-style floating emojis) ----------
@@ -869,7 +1019,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
   // Hot-plug: plugging in a camera/mic mid-call restores its toolbar button
   // (and unplugging dims it) without a reload.
-  const onDeviceChange = () => void refreshDeviceAvailability();
+  const onDeviceChange = () => {
+    void refreshDeviceAvailability();
+    void settings.refreshIfOpen();
+  };
   const md = navigator.mediaDevices;
   if (md?.addEventListener) {
     md.addEventListener('devicechange', onDeviceChange);
@@ -933,6 +1086,9 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     updateToolbarLabels();
     void room.setBackground(mode).catch(reportError);
     bgPanel.classList.add('hidden');
+    if (mode === 'none' || mode === 'blur' || mode === 'remove') {
+      persist({ effects: { background: mode as PersistedBackgroundMode } });
+    }
   }
 
   for (const choice of [
@@ -1106,65 +1262,14 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
   async function showSettings() {
     if (!room) return;
-    const opening = settingsEl.classList.contains('hidden');
-    showPanel('settings', opening);
-    if (!opening) return;
-    let devices: MediaDeviceInfo[] = [];
-    try {
-      devices = await navigator.mediaDevices.enumerateDevices();
-    } catch (err) {
-      reportError(err);
-      return;
+    const opening = !settings.isOpen();
+    if (opening) {
+      showPanel('participants', false);
+      closeOverflow();
+      await settings.open();
+    } else {
+      settings.close();
     }
-    settingsEl.innerHTML = '';
-    const h = document.createElement('h3');
-    h.textContent = labels.settings;
-    settingsEl.appendChild(h);
-
-    const currentDevice = (kind: 'audio' | 'video'): string | undefined =>
-      room?.localMedia
-        ?.getTracks()
-        .find((t) => t.kind === kind && t.readyState === 'live')
-        ?.getSettings().deviceId;
-
-    const addSelect = (title: string, kind: MediaDeviceKind, active: 'audio' | 'video', onPick: (id: string) => void) => {
-      const wrap = document.createElement('label');
-      wrap.className = 'kapi-device';
-      wrap.append(document.createTextNode(title));
-      const sel = document.createElement('select');
-      const current = currentDevice(active);
-      let foundCurrent = false;
-      for (const d of devices.filter((x) => x.kind === kind)) {
-        const opt = document.createElement('option');
-        opt.value = d.deviceId;
-        opt.textContent = d.label || `${title} ${sel.options.length + 1}`;
-        if (d.deviceId === current) {
-          opt.selected = true;
-          foundCurrent = true;
-        }
-        sel.appendChild(opt);
-      }
-      if (!foundCurrent && sel.options.length) sel.selectedIndex = 0;
-      // Nothing to pick — name the absence instead of rendering a dead dropdown.
-      if (!sel.options.length) {
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.disabled = true;
-        opt.selected = true;
-        opt.textContent = kind === 'audioinput' ? labels.noMic : labels.noCam;
-        sel.appendChild(opt);
-      }
-      sel.addEventListener('change', () => onPick(sel.value));
-      wrap.appendChild(sel);
-      settingsEl.appendChild(wrap);
-    };
-
-    addSelect(labels.microphone, 'audioinput', 'audio', (id) => {
-      room?.switchDevice('audioinput', id).catch(reportError);
-    });
-    addSelect(labels.camera, 'videoinput', 'video', (id) => {
-      room?.switchDevice('videoinput', id).catch(reportError);
-    });
   }
 
   function makeButton(id: ToolbarButton, text: string, onClick: () => void) {
@@ -1421,8 +1526,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   // In-call keyboard shortcuts (Jitsi-style): M mute, V camera. Scoped to
   // the mounted root so host-page shortcuts are never hijacked, and ignored
   // while a form control has focus (typing in settings must not mute you).
-  if (options.shortcuts !== false) {
+  // `shortcutsOn` can be toggled later from Settings → General.
+  {
     const onShortcut = (e: KeyboardEvent) => {
+      if (!shortcutsOn) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const t = e.target;
       if (t instanceof HTMLElement && t.closest('input, textarea, select, [contenteditable]')) {
@@ -1440,7 +1547,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   }
 
   // Wire UI events before announce so a sync `peers` roster is not missed.
-  void KapiRoom.join({ ...options, autoJoin: false })
+  // Prefer joinOptions so remembered devices / effects / layout apply.
+  void KapiRoom.join({ ...joinOptions, autoJoin: false })
     .then((r) => {
       if (disposed) {
         void r.hangup();
