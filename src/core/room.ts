@@ -650,9 +650,14 @@ export class KapiRoom {
     if (!this.screenStream) {
       await this.replaceVideoTrack(null);
     }
+    const screenVideos = new Set(this.screenStream?.getVideoTracks() ?? []);
     for (const stream of [this.rawCameraStream, this.localStream]) {
       if (!stream) continue;
+      // localStream is the screen preview while sharing — same MediaStreamTrack
+      // object peers receive. Stopping it would end the share for everyone.
+      if (this.screenStream && stream === this.localStream) continue;
       for (const t of stream.getVideoTracks()) {
+        if (screenVideos.has(t)) continue;
         stream.removeTrack(t);
         t.stop();
       }

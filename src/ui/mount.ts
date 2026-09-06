@@ -1473,12 +1473,20 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
           if (peerId === selfId) {
             const tile = tiles.get(selfId);
             if (tile) {
-              const name = displayName?.trim() || labels.you;
-              tile.label.textContent = name;
-              applyAvatar(tile, avatarUrl, name);
+              const name =
+                displayName !== undefined
+                  ? displayName.trim() || labels.you
+                  : tile.label.textContent || labels.you;
+              if (displayName !== undefined) tile.label.textContent = name;
+              applyAvatar(tile, avatarUrl, name, avatarUrl === undefined);
             }
           } else {
-            ensureTile(peerId, displayName ?? peerId, avatarUrl);
+            const existing = tiles.get(peerId);
+            const label =
+              displayName !== undefined
+                ? displayName.trim() || peerId
+                : existing?.label.textContent?.trim() || peerId;
+            ensureTile(peerId, label, avatarUrl);
           }
           renderParticipants();
         }),

@@ -480,6 +480,22 @@ assert(eventsA.errors.length === 0, 'A stayed error-free');
     'setCam(false) releases camera tracks again',
   );
 
+  // Cam-off while screen sharing must not stop the display track (local
+  // preview reuses the same MediaStreamTrack peers receive).
+  await room.setCam(true);
+  await room.shareScreen(true);
+  assert(room.sharing, 'shareScreen(true) marks sharing');
+  const shareVideo = room.localMedia?.getVideoTracks().find((t) => t.readyState === 'live');
+  assert(!!shareVideo, 'screen share publishes a live video track');
+  await room.setCam(false);
+  assert(room.sharing, 'setCam(false) during share keeps sharing');
+  assert(
+    shareVideo.readyState === 'live',
+    'setCam(false) during share must not end the screen track',
+  );
+  await room.shareScreen(false);
+  assert(!room.sharing, 'shareScreen(false) ends sharing');
+
   // Screen share with tab audio attaches a second outbound audio sender.
   const sharePeer = new KapiPeer('share-remote', [], true, {
     onIce() {},
