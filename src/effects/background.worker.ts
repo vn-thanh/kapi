@@ -53,6 +53,8 @@ async function handle(msg: InMsg) {
     case 'frame':
       if (busy || !segmenter) {
         msg.bitmap.close();
+        // Always ack so the main thread clears pendingFrame.
+        self.postMessage({ type: 'frame-skip', id: msg.id });
         return;
       }
       busy = true;
@@ -61,6 +63,8 @@ async function handle(msg: InMsg) {
         msg.bitmap.close();
         if (out) {
           self.postMessage({ type: 'frame', id: msg.id, bitmap: out }, { transfer: [out] });
+        } else {
+          self.postMessage({ type: 'frame-skip', id: msg.id });
         }
       } finally {
         busy = false;

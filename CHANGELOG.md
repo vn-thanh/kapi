@@ -41,6 +41,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Cam-off during screen share** — `setCam(false)` no longer stops the display track that the local preview shares with outbound video.
 - **Partial `peer-meta` in UI** — avatar-only updates keep the existing tile name instead of falling back to the raw peer id.
+- **Partial `peer-meta` merge** — name-only updates no longer clear a stored avatar; `setIdentity` sends `avatarUrl: ''` to clear, and the background Worker acks dropped frames so the pipeline cannot stall.
 
 ## [1.1.0](https://github.com/vn-thanh/kapi/releases/tag/v1.1.0) (2026-09-05)
 

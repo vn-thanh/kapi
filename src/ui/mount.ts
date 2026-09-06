@@ -1478,7 +1478,12 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
                   ? displayName.trim() || labels.you
                   : tile.label.textContent || labels.you;
               if (displayName !== undefined) tile.label.textContent = name;
-              applyAvatar(tile, avatarUrl, name, avatarUrl === undefined);
+              // Local setIdentity always sends a full snapshot (avatarUrl '' =
+              // cleared). Never keepIfOmitted — that left stale images after clear.
+              if (avatarUrl !== undefined) applyAvatar(tile, avatarUrl, name, false);
+              else if (displayName !== undefined) {
+                applyAvatar(tile, undefined, name, true);
+              }
             }
           } else {
             const existing = tiles.get(peerId);

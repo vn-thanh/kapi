@@ -85,7 +85,8 @@ export class BackgroundProcessor {
       const worker = this.spawnWorker();
       if (!worker) return false;
       const ok = await new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => resolve(false), 4000);
+        // Model CDN fetch can exceed a few seconds on slow links.
+        const timer = setTimeout(() => resolve(false), 15_000);
         worker.onmessage = (ev: MessageEvent<{ type?: string; message?: string }>) => {
           if (ev.data?.type === 'ready') {
             // Script loaded — kick off model init; model-ready confirms it.
@@ -118,7 +119,12 @@ export class BackgroundProcessor {
           this.ctx.drawImage(ev.data.bitmap, 0, 0);
           ev.data.bitmap.close();
           this.pendingFrame = false;
-        } else if (ev.data?.type === 'error') {
+        } else if (
+          ev.data?.type === 'frame-skip' ||
+          ev.data?.type === 'error' ||
+          (ev.data?.type === 'frame' && !ev.data.bitmap)
+        ) {
+          // Worker dropped/failed a frame — unblock the in-flight gate.
           this.pendingFrame = false;
         }
       };

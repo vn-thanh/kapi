@@ -561,15 +561,23 @@ export class KapiRoom {
         case 'peer-meta': {
           if (typeof msg.peerId !== 'string') return;
           if (msg.peerId === this.options.peerId) return;
-          const displayName =
-            typeof msg.displayName === 'string' ? msg.displayName : undefined;
-          const avatarUrl = typeof msg.avatarUrl === 'string' ? msg.avatarUrl : undefined;
-          if (displayName === undefined && avatarUrl === undefined) return;
-          this.mergePeerMeta(msg.peerId, { displayName, avatarUrl });
+          // Only patch fields present on the wire — a name-only update must
+          // not clear a previously stored avatar (JSON omits undefined keys).
+          const patch: Pick<SignalPeer, 'displayName' | 'avatarUrl'> & {
+            avatarUrl?: string;
+          } = {};
+          if (typeof msg.displayName === 'string') patch.displayName = msg.displayName;
+          if ('avatarUrl' in msg) {
+            patch.avatarUrl =
+              typeof msg.avatarUrl === 'string' ? msg.avatarUrl : undefined;
+          }
+          if (!('displayName' in patch) && !('avatarUrl' in patch)) return;
+          this.mergePeerMeta(msg.peerId, patch);
           this.emit('peer-meta', {
             peerId: msg.peerId,
-            ...(displayName !== undefined ? { displayName } : {}),
-            ...(avatarUrl !== undefined ? { avatarUrl } : {}),
+            ...('displayName' in patch ? { displayName: patch.displayName } : {}),
+            // '' means cleared — keep the key so UI does not treat it as omit.
+            ...('avatarUrl' in patch ? { avatarUrl: patch.avatarUrl ?? '' } : {}),
           });
           break;
         }
@@ -893,16 +901,19 @@ export class KapiRoom {
     if (identity.avatarUrl !== undefined) {
       this.options.avatarUrl = identity.avatarUrl.trim() || undefined;
     }
+    // Always send avatarUrl as a string so peers can distinguish "cleared"
+    // ('') from "unchanged" (key omitted). Local UI gets the same snapshot.
+    const avatarUrl = this.options.avatarUrl ?? '';
     this.signalSend({
       type: 'peer-meta',
       peerId: this.options.peerId,
       displayName: this.options.displayName,
-      avatarUrl: this.options.avatarUrl,
+      avatarUrl,
     });
     this.emit('peer-meta', {
       peerId: this.options.peerId,
       displayName: this.options.displayName,
-      avatarUrl: this.options.avatarUrl,
+      avatarUrl,
     });
   }
 

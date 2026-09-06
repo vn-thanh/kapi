@@ -514,10 +514,53 @@ assert(eventsA.errors.length === 0, 'A stayed error-free');
   room.on('peer-meta', (p) => meta.push(p));
   room.setIdentity({ displayName: 'Cam', avatarUrl: 'https://example.com/a.png' });
   assert(meta.length === 1 && meta[0].displayName === 'Cam', 'setIdentity emits peer-meta');
+  assert(meta[0].avatarUrl === 'https://example.com/a.png', 'setIdentity sends avatarUrl string');
   assert(room.participants[0].displayName === 'Cam', 'participants reflect setIdentity');
+  room.setIdentity({ avatarUrl: '' });
+  assert(meta.length === 2 && meta[1].avatarUrl === '', 'clear avatar emits empty string');
+  assert(room.participants[0].avatarUrl === undefined, 'cleared avatar dropped from participants');
 
   await room.hangup();
   console.log('ok: true cam-off, share-audio sender, setIdentity');
+}
+
+// Name-only peer-meta must not wipe a previously stored avatar.
+{
+  const busMeta = createLocalSignalBus();
+  const adapterA = busMeta.createAdapter('meta-a');
+  const roomB = await KapiRoom.join({
+    roomId: 'meta',
+    peerId: 'meta-b',
+    signal: busMeta.createAdapter('meta-b'),
+  });
+  adapterA.send({
+    type: 'join',
+    peerId: 'meta-a',
+    displayName: 'Alice',
+    avatarUrl: 'https://example.com/alice.png',
+  });
+  await new Promise((r) => setTimeout(r, 30));
+  assert(
+    roomB.participants.find((p) => p.peerId === 'meta-a')?.avatarUrl ===
+      'https://example.com/alice.png',
+    'join stores remote avatar',
+  );
+  adapterA.send({ type: 'peer-meta', peerId: 'meta-a', displayName: 'Alice 2' });
+  await new Promise((r) => setTimeout(r, 30));
+  const afterName = roomB.participants.find((p) => p.peerId === 'meta-a');
+  assert(afterName?.displayName === 'Alice 2', 'name-only peer-meta updates displayName');
+  assert(
+    afterName?.avatarUrl === 'https://example.com/alice.png',
+    'name-only peer-meta keeps existing avatar',
+  );
+  adapterA.send({ type: 'peer-meta', peerId: 'meta-a', avatarUrl: '' });
+  await new Promise((r) => setTimeout(r, 30));
+  assert(
+    roomB.participants.find((p) => p.peerId === 'meta-a')?.avatarUrl === undefined,
+    'empty avatarUrl clears remote avatar',
+  );
+  await roomB.hangup();
+  console.log('ok: peer-meta partial updates preserve / clear avatar');
 }
 
 console.log('ok: negotiation, tracks, rejoin, reactions, hangup, mid-offer hangup');
