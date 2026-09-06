@@ -21,6 +21,8 @@ type Tile = {
   avatar: HTMLDivElement;
   conn: HTMLSpanElement;
   micChip: HTMLSpanElement;
+  /** Visible while this peer's screen share includes tab/system audio. */
+  shareAudioChip: HTMLSpanElement;
   /** performance.now() when this video last presented a frame. */
   lastFrameAt: number;
   /** A frame was presented at least once on the current source. */
@@ -169,10 +171,15 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   const buttons = new Map<ToolbarButton, HTMLButtonElement>();
   /** Mic / share state that arrived before the peer's tile existed (broadcast
    *  raced ahead of presence) — applied in ensureTile. */
-  const pendingMediaState = new Map<string, { sharing?: boolean; mic?: boolean }>();
+  const pendingMediaState = new Map<
+    string,
+    { sharing?: boolean; mic?: boolean; shareAudio?: boolean }
+  >();
   /** Signaled mic-on per peer. Prefer this over remote `track.muted`, which
    *  Chrome never fires for audio (w3c/webrtc-pc#3077). */
   const peerMicOn = new Map<string, boolean>();
+  /** Signaled "share includes audio" per peer. */
+  const peerShareAudio = new Map<string, boolean>();
   /** One managed stream per remote peer — never trust `ontrack` stream
    *  identity: with replaceTrack/renegotiation browsers may report audio and
    *  video on *different* MediaStream objects (or none at all), which used to
@@ -554,7 +561,12 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     micChip.className = 'kapi-mic-state hidden';
     micChip.setAttribute('aria-hidden', 'true');
     micChip.innerHTML = statusIconHtml('micOff');
-    meta.append(conn, tag, micChip);
+    const shareAudioChip = document.createElement('span');
+    shareAudioChip.className = 'kapi-share-audio hidden';
+    shareAudioChip.setAttribute('aria-hidden', 'true');
+    shareAudioChip.title = labels.shareWithAudio;
+    shareAudioChip.textContent = '♪';
+    meta.append(conn, tag, shareAudioChip, micChip);
 
     wrap.append(video, avatar, meta);
     grid.appendChild(wrap);
@@ -566,6 +578,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       avatar,
       conn,
       micChip,
+      shareAudioChip,
       lastFrameAt: performance.now(),
       presentedFrame: false,
       frameHandle: null,
@@ -709,8 +722,12 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   }
 
   /** Apply a `media-state` snapshot (live or stashed until the tile exists). */
-  function applyMediaState(peerId: string, state: { sharing?: boolean; mic?: boolean }) {
+  function applyMediaState(
+    peerId: string,
+    state: { sharing?: boolean; mic?: boolean; shareAudio?: boolean },
+  ) {
     if (state.mic !== undefined) peerMicOn.set(peerId, state.mic);
+    if (state.shareAudio !== undefined) peerShareAudio.set(peerId, state.shareAudio);
     const tile = tiles.get(peerId);
     if (!tile) {
       const prev = pendingMediaState.get(peerId) ?? {};
@@ -723,7 +740,15 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         tile.wrap.classList.toggle('screenshare', next);
         applyLayout();
       }
+      if (!next) peerShareAudio.set(peerId, false);
     }
+    const shareAudioOn =
+      (state.sharing ?? tile.wrap.classList.contains('screenshare')) &&
+      (peerShareAudio.get(peerId) ?? false);
+    tile.shareAudioChip.classList.toggle('hidden', !shareAudioOn);
+    tile.shareAudioChip.setAttribute('aria-hidden', shareAudioOn ? 'false' : 'true');
+    if (shareAudioOn) tile.shareAudioChip.setAttribute('aria-label', labels.shareWithAudio);
+    else tile.shareAudioChip.removeAttribute('aria-label');
     const stream =
       peerId === selfId
         ? (room?.localMedia ?? (tile.video.srcObject as MediaStream | null))
@@ -775,6 +800,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     tiles.delete(peerId);
     pendingMediaState.delete(peerId);
     peerMicOn.delete(peerId);
+    peerShareAudio.delete(peerId);
     speakers.forget(peerId);
     if (pinnedPeer === peerId) pinnedPeer = null;
     remoteStreams.get(peerId)?.getTracks().forEach((t) => t.stop());
@@ -1053,7 +1079,13 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         paintButton(b, id, on ? labels.camOn : labels.camOff, on ? 'on' : 'off');
       } else if (id === 'share') {
         const sharing = room?.sharing ?? false;
-        paintButton(b, id, sharing ? labels.stopShare : labels.share, sharing ? 'active' : 'on');
+        const withAudio = sharing && (room?.sharingAudio ?? false);
+        const tip = sharing
+          ? withAudio
+            ? labels.shareWithAudio
+            : labels.stopShare
+          : labels.share;
+        paintButton(b, id, tip, sharing ? 'active' : 'on');
       } else if (id === 'background') {
         paintButton(b, id, labels.background, bgMode !== 'none' ? 'active' : 'on');
       } else if (id === 'layout') {
@@ -1433,8 +1465,22 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         }),
         r.on('track', ({ peerId, track }) => attachRemoteTrack(peerId, track)),
         r.on('reaction', ({ emoji }) => spawnReactionFloat(emoji)),
-        r.on('media-state', ({ peerId, sharing, mic }) => {
-          applyMediaState(peerId, { sharing, mic });
+        r.on('media-state', ({ peerId, sharing, mic, shareAudio }) => {
+          applyMediaState(peerId, { sharing, mic, shareAudio });
+          if (peerId === selfId) updateToolbarLabels();
+        }),
+        r.on('peer-meta', ({ peerId, displayName, avatarUrl }) => {
+          if (peerId === selfId) {
+            const tile = tiles.get(selfId);
+            if (tile) {
+              const name = displayName?.trim() || labels.you;
+              tile.label.textContent = name;
+              applyAvatar(tile, avatarUrl, name);
+            }
+          } else {
+            ensureTile(peerId, displayName ?? peerId, avatarUrl);
+          }
+          renderParticipants();
         }),
         r.on('peer-state', ({ peerId, state }) => {
           const tile = tiles.get(peerId);
