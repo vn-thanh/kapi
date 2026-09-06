@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project is maintained by [release-please](https://github.com/googleapis/release-please) — future entries are generated automatically from Conventional Commits.
 
+## [1.4.0](https://github.com/vn-thanh/kapi/compare/v1.3.0...v1.4.0) (2026-09-06)
+
+
+### Features
+
+* device adaptation and meeting UI polish ([619b86d](https://github.com/vn-thanh/kapi/commit/619b86daaad888f73c7dd88e768e57bb9f90d379))
+* **ui:** add mirror and mic processing preferences ([da9ff52](https://github.com/vn-thanh/kapi/commit/da9ff5233f03bb7f701493fa3c346fb4633f5a17))
+
+
+### Bug Fixes
+
+* re-acquire mic/cam after hot-plug mid-meeting ([d2cff81](https://github.com/vn-thanh/kapi/commit/d2cff81c3565369b3bba2444ed492db390aee890))
+* **ui:** harden mobile layout and viewport handling ([5e12a09](https://github.com/vn-thanh/kapi/commit/5e12a09e99839edeab3986a48dbeef05a1a0df35))
+
 ## [Unreleased]
 
 ### Added
