@@ -13,6 +13,9 @@ export function injectStyles() {
   width: 100%;
   height: 100%;
   min-height: 240px;
+  /* Size queries against the mount box (embed-safe), not the viewport. */
+  container-type: inline-size;
+  container-name: kapi;
   background: var(--kapi-bg, #0d1117);
   color: var(--kapi-fg, #f5f5f5);
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -162,6 +165,28 @@ export function injectStyles() {
   flex: none;
   width: 100%;
   aspect-ratio: 16 / 9;
+}
+/* Narrow mount: sidebar column steals too much stage — use a bottom
+   filmstrip like spotlight instead (same tiles, different chrome).
+   Selectors target descendants of the container (`.kapi-root`); the root
+   itself cannot appear in the selector path. */
+@container kapi (max-width: 720px) {
+  .kapi-main.is-sidebar {
+    flex-direction: column;
+  }
+  .kapi-main.is-sidebar > .kapi-strip {
+    flex-direction: row;
+    width: auto;
+    height: clamp(96px, 18vh, 160px);
+    padding: 0 12px 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .kapi-main.is-sidebar > .kapi-strip > .kapi-tile {
+    width: auto;
+    height: 100%;
+    aspect-ratio: 16 / 9;
+  }
 }
 /* Alone (or focus with nobody left in the strip): don't reserve filmstrip. */
 .kapi-root.layout-solo .kapi-strip {
@@ -423,6 +448,20 @@ export function injectStyles() {
 .kapi-toolbar button:hover {
   background: rgba(255, 255, 255, 0.16);
 }
+@media (hover: none) {
+  .kapi-toolbar button:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .kapi-toolbar button.is-off:hover {
+    background: rgba(239, 68, 68, 0.92);
+  }
+  .kapi-toolbar button.is-active:hover {
+    background: var(--kapi-accent, #3b82f6);
+  }
+  .kapi-toolbar button[data-id='hangup']:hover {
+    filter: none;
+  }
+}
 .kapi-toolbar button:active {
   transform: scale(0.94);
 }
@@ -669,6 +708,13 @@ export function injectStyles() {
 }
 .kapi-settings-chip:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+.kapi-settings-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.kapi-settings-chip:disabled:hover {
+  background: rgba(0, 0, 0, 0.28);
 }
 .kapi-settings-chip.is-active {
   border-color: color-mix(in srgb, var(--kapi-accent, #3b82f6) 65%, transparent);

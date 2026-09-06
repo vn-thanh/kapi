@@ -74,6 +74,7 @@ export const DEFAULT_LABELS: Required<KapiUiLabels> = {
   bgBlur: 'Blur',
   bgRemove: 'Remove',
   bgImage: 'Image…',
+  bgUnsupported: 'Background effects unavailable on this device',
   settings: 'Settings',
   hangup: 'Leave',
   more: 'More',

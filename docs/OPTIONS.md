@@ -53,6 +53,7 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
   // Proactive capture + effect presets (default on). Complements adaptive:
   // picks 720p/540p/360p capture, starting rungs, effect fps, and optional
   // soft maxBitrate *before* the first frame. Pass false for static 720p.
+  // Built-in UI also keeps background effects off on the `low` tier.
   connectionQuality?: boolean | {
     enabled?: boolean        // default true
     intervalMs?: number      // default 3000 (min 500)

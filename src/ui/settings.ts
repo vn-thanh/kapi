@@ -17,6 +17,8 @@ export type SettingsPanelCallbacks = {
   getVideoFit: () => 'contain' | 'cover';
   getShortcuts: () => boolean;
   getAudioOutputId: () => string | undefined;
+  /** When false, blur/remove/image controls are disabled (low-tier devices). */
+  getBackgroundEffectsAllowed?: () => boolean;
   onDevicePick: (kind: 'audioinput' | 'videoinput', deviceId: string) => void;
   onAudioOutputPick: (deviceId: string) => void;
   onBackground: (mode: PersistedBackgroundMode) => void;
@@ -292,6 +294,7 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
 
       const bgMode = cb.getBackground();
       const activeBg = typeof bgMode === 'string' ? bgMode : 'image';
+      const effectsAllowed = cb.getBackgroundEffectsAllowed?.() ?? true;
 
       const bgChoices: { id: string; label: string; apply: () => void }[] = [
         { id: 'none', label: cb.labels.bgNone, apply: () => cb.onBackground('none') },
@@ -307,7 +310,13 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
         b.textContent = choice.label;
         b.classList.toggle('is-active', activeBg === choice.id);
         b.setAttribute('aria-pressed', activeBg === choice.id ? 'true' : 'false');
+        const heavy = choice.id !== 'none';
+        if (heavy && !effectsAllowed) {
+          b.disabled = true;
+          b.title = cb.labels.bgUnsupported;
+        }
         b.addEventListener('click', () => {
+          if (heavy && !effectsAllowed) return;
           choice.apply();
           for (const x of bgRow.querySelectorAll('.kapi-settings-chip')) {
             const on = (x as HTMLElement).dataset.bg === choice.id;
@@ -326,11 +335,18 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
       imgBtn.textContent = cb.labels.bgImage;
       imgBtn.classList.toggle('is-active', activeBg === 'image');
       imgBtn.setAttribute('aria-pressed', activeBg === 'image' ? 'true' : 'false');
+      if (!effectsAllowed) {
+        imgBtn.disabled = true;
+        imgBtn.title = cb.labels.bgUnsupported;
+      }
       const file = document.createElement('input');
       file.type = 'file';
       file.accept = 'image/*';
       file.hidden = true;
-      imgBtn.addEventListener('click', () => file.click());
+      imgBtn.addEventListener('click', () => {
+        if (!effectsAllowed) return;
+        file.click();
+      });
       file.addEventListener('change', () => {
         const f = file.files?.[0];
         file.value = '';
@@ -345,10 +361,13 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
       });
       bgRow.append(imgBtn, file);
       effectsPane.appendChild(bgRow);
+      if (!effectsAllowed) {
+        addHint(effectsPane, cb.labels.bgUnsupported);
+      }
 
       const blurField = document.createElement('label');
       blurField.className = 'kapi-settings-field kapi-device';
-      blurField.hidden = activeBg !== 'blur';
+      blurField.hidden = activeBg !== 'blur' || !effectsAllowed;
       const blurCaption = document.createElement('span');
       blurCaption.className = 'kapi-device-label';
       const blurValue = document.createElement('span');

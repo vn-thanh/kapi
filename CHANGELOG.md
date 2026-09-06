@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Settings Escape / `aria-modal`** — Escape closes the settings dialog and participants pane; settings uses `aria-modal="true"`.
 - **Mobile safe-area** — toolbar and toast respect `env(safe-area-inset-*)` so home-indicator devices do not cover mute / hangup.
 - **Screen-share UX** — Share dims when `getDisplayMedia` is missing; permission denials use a friendly toast; dismissing the share picker no longer surfaces an error.
+- **Mobile layout** — sidebar view collapses to a bottom filmstrip under ~720px mount width (container query); demo uses `100dvh` + `visualViewport` height; touch hover sticky styles are neutralized; background effects stay off on `deviceAdaptation` tier `low`.
 ## [1.3.0](https://github.com/vn-thanh/kapi/compare/v1.2.0...v1.3.0) (2026-09-06)
 
 ### Added

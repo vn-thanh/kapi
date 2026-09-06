@@ -278,6 +278,8 @@ export interface KapiUiLabels {
   bgRemove?: string;
   /** "Pick an image file" button in the background picker. */
   bgImage?: string;
+  /** "Background effects unavailable on this device" (low deviceAdaptation tier). */
+  bgUnsupported?: string;
   settings?: string;
   hangup?: string;
   /** Overflow ("⋯") button that holds toolbar controls that don't fit. */

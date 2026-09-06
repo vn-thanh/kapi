@@ -1,3 +1,4 @@
+import { resolveDeviceAdaptation } from '../core/device';
 import { KapiRoom } from '../core/room';
 import { DEFAULT_LABELS, DEFAULT_THEME, DEFAULT_TOOLBAR, resolveConnectionQuality } from '../options';
 import {
@@ -115,8 +116,13 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   const resolvedFit: 'contain' | 'cover' =
     options.videoFit ?? saved?.ui.videoFit ?? 'contain';
   let shortcutsOn = options.shortcuts ?? saved?.ui.shortcuts ?? true;
-  const resolvedBg: BackgroundMode =
+  const deviceAdapt = resolveDeviceAdaptation(options.deviceAdaptation);
+  /** MediaPipe segmentation is too heavy on the lowest tier — keep effects off. */
+  const effectsHeavyBlocked = deviceAdapt.enabled && deviceAdapt.tier === 'low';
+  const rawBg: BackgroundMode =
     options.effects?.background ?? saved?.effects.background ?? 'none';
+  const resolvedBg: BackgroundMode =
+    effectsHeavyBlocked && rawBg !== 'none' ? 'none' : rawBg;
   const resolvedBlur = options.effects?.blurAmount ?? saved?.effects.blurAmount;
 
   const joinMedia = {
@@ -197,6 +203,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     getVideoFit: () => videoFit,
     getShortcuts: () => shortcutsOn,
     getAudioOutputId: () => audioOutputId,
+    getBackgroundEffectsAllowed: () => !effectsHeavyBlocked,
     onDevicePick: (kind, deviceId) => {
       void (async () => {
         try {
@@ -555,6 +562,8 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     root.classList.toggle('layout-focus', focusInGrid);
     // Hide the empty filmstrip when alone (or focus with nobody left to strip).
     root.classList.toggle('layout-solo', useStage && rest.length === 0);
+    // Marker for @container rules (container queries only style descendants).
+    main.classList.toggle('is-sidebar', layoutMode === 'sidebar');
 
     for (const t of tiles.values()) t.wrap.classList.toggle('featured', t === featured);
 
@@ -1117,6 +1126,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   /** Optimistically paint, then hand off to the room (errors toast). */
   function applyBackground(mode: BackgroundMode) {
     if (!room) return; // picker only opens once joined, but stay safe
+    if (effectsHeavyBlocked && mode !== 'none') {
+      showToast(labels.bgUnsupported);
+      return;
+    }
     bgMode = mode;
     paintBgPicker();
     updateToolbarLabels();
@@ -1236,7 +1249,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   function paintButton(b: HTMLButtonElement, id: ToolbarButton, text: string, mode: 'on' | 'off' | 'active' = 'on') {
     const unavailable =
       (id === 'share' && shareUnsupported) ||
-      (id === 'background' && deviceMissing.cam) ||
+      (id === 'background' && (deviceMissing.cam || effectsHeavyBlocked)) ||
       ((id === 'mic' || id === 'cam') && deviceMissing[id]);
     // An unavailable device replaces the toggle label ("Mute"/"Unmute") — a
     // mute tooltip on a button that cannot capture anything would be a lie.
@@ -1245,7 +1258,9 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         ? labels.noMic
         : id === 'share'
           ? labels.noShare
-          : labels.noCam
+          : id === 'background' && effectsHeavyBlocked && !deviceMissing.cam
+            ? labels.bgUnsupported
+            : labels.noCam
       : text;
     b.title = label;
     b.setAttribute('aria-label', label);
@@ -1472,6 +1487,23 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   });
   unsubs.push(() => toolbarRo.disconnect());
 
+  // iOS Safari URL bar / keyboard: visualViewport changes without always
+  // resizing the mount box — refresh chrome so the toolbar stays reachable.
+  const onVisualViewport = () => {
+    if (disposed) return;
+    layoutToolbar();
+    if (layoutMode === 'grid') sizeGrid();
+    if (!overflowMenu.classList.contains('hidden')) placeOverflow();
+  };
+  if (typeof window !== 'undefined' && window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onVisualViewport);
+    window.visualViewport.addEventListener('scroll', onVisualViewport);
+    unsubs.push(() => {
+      window.visualViewport?.removeEventListener('resize', onVisualViewport);
+      window.visualViewport?.removeEventListener('scroll', onVisualViewport);
+    });
+  }
+
   // ---------- lifecycle ----------
 
   const dispose = () => {
@@ -1566,6 +1598,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       // instead of spinning up a segmenter on an audio-only fallback stream.
       if (deviceMissing.cam) {
         showToast(labels.noCam);
+        return;
+      }
+      if (effectsHeavyBlocked) {
+        showToast(labels.bgUnsupported);
         return;
       }
       toggleBgPicker();
