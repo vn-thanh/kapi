@@ -444,6 +444,9 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     if (name === 'NotSupportedError') {
       return labels.noShare;
     }
+    const msg = err instanceof Error ? err.message : '';
+    if (/no microphone/i.test(msg)) return labels.noMic;
+    if (/no camera/i.test(msg)) return labels.noCam;
     if (err instanceof Error && err.message) return err.message;
     return String(err);
   }
@@ -1022,15 +1025,30 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   }
 
   // Hot-plug: plugging in a camera/mic mid-call restores its toolbar button
-  // (and unplugging dims it) without a reload.
+  // (and re-acquires tracks when mic/cam were already "on" but join had no
+  // hardware). OS enumeration often lags the event — refresh twice.
+  let deviceChangeTimer: ReturnType<typeof setTimeout> | null = null;
   const onDeviceChange = () => {
-    void refreshDeviceAvailability();
-    void settings.refreshIfOpen();
+    const run = async () => {
+      await refreshDeviceAvailability();
+      await room?.syncLocalMedia();
+      updateToolbarLabels();
+      void settings.refreshIfOpen();
+    };
+    void run();
+    if (deviceChangeTimer) clearTimeout(deviceChangeTimer);
+    deviceChangeTimer = setTimeout(() => {
+      deviceChangeTimer = null;
+      void run();
+    }, 400);
   };
   const md = navigator.mediaDevices;
   if (md?.addEventListener) {
     md.addEventListener('devicechange', onDeviceChange);
-    unsubs.push(() => md.removeEventListener('devicechange', onDeviceChange));
+    unsubs.push(() => {
+      md.removeEventListener('devicechange', onDeviceChange);
+      if (deviceChangeTimer) clearTimeout(deviceChangeTimer);
+    });
   }
 
   for (const emoji of reactionChoices) {
@@ -1516,26 +1534,34 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   const actions: Record<ToolbarButton, () => void> = {
     mic: () => {
       if (!room) return;
-      // No hardware → say so instead of flipping a state that changes nothing.
-      if (deviceMissing.mic) {
-        showToast(labels.noMic);
-        return;
-      }
-      void room
-        .setMic(!room.micOn)
-        .then(() => updateToolbarLabels())
-        .catch(reportError);
+      void (async () => {
+        // enumerateDevices often lags a hot-plug — re-check before blocking.
+        if (deviceMissing.mic) await refreshDeviceAvailability();
+        const enabling = !room.micOn;
+        // Turning off while still marked missing is a no-op; turning on always
+        // attempts getUserMedia (device lists are advisory until first grant).
+        if (deviceMissing.mic && !enabling) {
+          showToast(labels.noMic);
+          return;
+        }
+        await room.setMic(enabling);
+        if (enabling) await refreshDeviceAvailability();
+        updateToolbarLabels();
+      })().catch(reportError);
     },
     cam: () => {
       if (!room) return;
-      if (deviceMissing.cam) {
-        showToast(labels.noCam);
-        return;
-      }
-      void room
-        .setCam(!room.camOn)
-        .then(() => updateToolbarLabels())
-        .catch(reportError);
+      void (async () => {
+        if (deviceMissing.cam) await refreshDeviceAvailability();
+        const enabling = !room.camOn;
+        if (deviceMissing.cam && !enabling) {
+          showToast(labels.noCam);
+          return;
+        }
+        await room.setCam(enabling);
+        if (enabling) await refreshDeviceAvailability();
+        updateToolbarLabels();
+      })().catch(reportError);
     },
     share: () => {
       if (!room) return;

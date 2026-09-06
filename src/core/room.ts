@@ -634,6 +634,42 @@ export class KapiRoom {
     this.broadcastMediaState();
   }
 
+  /**
+   * After a hot-plug (or when join fell back to an empty stream), re-acquire
+   * mic/cam tracks for kinds the user already wants on. No-ops when a live
+   * track exists or the kind is intentionally off.
+   */
+  async syncLocalMedia() {
+    if (this.closed) return;
+    if (this.micEnabled) {
+      const live = this.rawCameraStream
+        ?.getAudioTracks()
+        .some((t) => t.readyState === 'live');
+      if (!live) {
+        try {
+          await this.ensureLocalKind('audio');
+          this.applyMicState();
+        } catch (err) {
+          this.emit('error', { error: err instanceof Error ? err : new Error(String(err)) });
+        }
+      }
+    }
+    if (this.camEnabled) {
+      const live = this.rawCameraStream
+        ?.getVideoTracks()
+        .some((t) => t.readyState === 'live');
+      if (!live) {
+        try {
+          await this.ensureLocalKind('video');
+          await this.publishCameraVideo();
+        } catch (err) {
+          this.emit('error', { error: err instanceof Error ? err : new Error(String(err)) });
+        }
+      }
+    }
+    this.broadcastMediaState();
+  }
+
   private applyMicState() {
     // Only mic tracks — never the screen-share audio track on screenStream.
     for (const t of this.rawCameraStream?.getAudioTracks() ?? []) t.enabled = this.micEnabled;
