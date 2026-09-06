@@ -59,6 +59,7 @@ export const DEFAULT_LABELS: Required<KapiUiLabels> = {
   noCam: 'No camera found',
   share: 'Share screen',
   stopShare: 'Stop sharing',
+  shareWithAudio: 'Sharing with audio',
   react: 'React',
   participants: 'Participants',
   background: 'Background',

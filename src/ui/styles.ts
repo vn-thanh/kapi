@@ -342,6 +342,22 @@ export function injectStyles() {
 .kapi-mic-state.hidden {
   display: none;
 }
+.kapi-share-audio {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--kapi-accent, #3b82f6) 85%, #000);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+}
+.kapi-share-audio.hidden {
+  display: none;
+}
 
 /* ---------- toolbar ----------
    Single row. Controls that don't fit move into .kapi-overflow (the ⋯

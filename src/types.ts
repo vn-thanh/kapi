@@ -16,11 +16,24 @@ export type SignalMessage =
   | { type: 'reaction'; emoji: string; from?: string }
   | { type: 'peers'; peers: SignalPeer[] }
   /**
+   * Live identity update after join — displayName / avatarUrl. Relays that
+   * drop unknown types only lose the roster refresh; media is unaffected.
+   */
+  | {
+      type: 'peer-meta';
+      peerId: string;
+      displayName?: string;
+      avatarUrl?: string;
+      to?: string;
+      from?: string;
+    }
+  /**
    * Broadcast when a peer's mic / camera / screen-share toggles (and sent
    * targeted with `to` to late joiners). Relays that only switch over the
    * documented types may drop it — media itself is unaffected; remote UIs
    * just lose mute chips and share-stage placement. `sharing` stays required
-   * so older receivers keep parsing; `mic` / `cam` are optional (`true` = on).
+   * so older receivers keep parsing; `mic` / `cam` / `shareAudio` are optional
+   * (`true` = on).
    */
   | {
       type: 'media-state';
@@ -28,6 +41,8 @@ export type SignalMessage =
       sharing: boolean;
       mic?: boolean;
       cam?: boolean;
+      /** True when the current screen share includes tab/system audio. */
+      shareAudio?: boolean;
       to?: string;
       from?: string;
     }
@@ -63,8 +78,9 @@ export type KapiLayout = 'grid' | 'spotlight' | 'sidebar';
 
 /**
  * When to call `getUserMedia` for kinds allowed by `media.audio` / `media.video`.
- * - `'join'` — acquire on join, then apply `startMic` / `startCam` via
- *   `track.enabled` (fast unmute; camera LED may stay on while cam is "off").
+ * - `'join'` — acquire on join for kinds that may be needed, then apply
+ *   `startMic` via `track.enabled`. Camera off uses `replaceTrack(null)` and
+ *   stops the camera track (LED off); turning the camera on re-acquires.
  * - `'on-enable'` — only acquire kinds that start on; acquire the rest when
  *   `setMic(true)` / `setCam(true)`. Best privacy (no LED until the user
  *   turns the camera on). Hosts that run a pre-join preview should pass
@@ -173,6 +189,11 @@ export interface KapiRoomOptions {
 export type RoomEventMap = {
   'peer-joined': { peerId: string; displayName?: string; avatarUrl?: string };
   'peer-left': { peerId: string };
+  /**
+   * A peer's displayName / avatarUrl changed after join (local `setIdentity`
+   * or remote `peer-meta` signal).
+   */
+  'peer-meta': { peerId: string; displayName?: string; avatarUrl?: string };
   track: { peerId: string; track: MediaStreamTrack; streams: readonly MediaStream[] };
   /** RTCPeerConnection state per remote peer — drive UI connection badges. */
   'peer-state': { peerId: string; state: RTCPeerConnectionState };
@@ -188,9 +209,15 @@ export type RoomEventMap = {
   reaction: { peerId: string; emoji: string };
   /** Mic / camera / screen-share state changed — fired locally by
    *  `setMic` / `setCam` / `shareScreen` and for remote peers via the
-   *  `media-state` signal message. `mic` / `cam` may be omitted by older
-   *  senders (`true` = on). */
-  'media-state': { peerId: string; sharing: boolean; mic?: boolean; cam?: boolean };
+   *  `media-state` signal message. `mic` / `cam` / `shareAudio` may be
+   *  omitted by older senders (`true` = on). */
+  'media-state': {
+    peerId: string;
+    sharing: boolean;
+    mic?: boolean;
+    cam?: boolean;
+    shareAudio?: boolean;
+  };
   error: { error: Error };
   hangup: undefined;
 };
@@ -217,6 +244,8 @@ export interface KapiUiLabels {
   noCam?: string;
   share?: string;
   stopShare?: string;
+  /** Screen share that includes tab/system audio (toolbar tooltip suffix). */
+  shareWithAudio?: string;
   react?: string;
   participants?: string;
   background?: string;

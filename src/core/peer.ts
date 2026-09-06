@@ -82,6 +82,11 @@ export class KapiPeer {
    *  transceivers for kinds we have no local track for. */
   private audioTransceiver: RTCRtpTransceiver | null = null;
   private videoTransceiver: RTCRtpTransceiver | null = null;
+  /**
+   * Second outbound audio for screen-share tab/system sound — kept separate
+   * from the mic transceiver so muting the mic never silences the share.
+   */
+  private shareAudioSender: RTCRtpSender | null = null;
   /** ICE may arrive before setRemoteDescription — queue until ready. */
   private readonly pendingIce: RTCIceCandidateInit[] = [];
 
@@ -141,6 +146,23 @@ export class KapiPeer {
     return this.setTrack(kind, track);
   }
 
+  /**
+   * Attach or clear the screen-share audio sender (tab/system sound). Does not
+   * touch the mic transceiver. `null` stops sending without removing the
+   * m-line so the next share can `replaceTrack` without another renegotiation
+   * when the transceiver already exists.
+   * @returns true when a new m-line was added (renegotiation required)
+   */
+  async setShareAudioTrack(track: MediaStreamTrack | null): Promise<boolean> {
+    if (this.shareAudioSender) {
+      await this.shareAudioSender.replaceTrack(track);
+      return false;
+    }
+    if (!track) return false;
+    this.shareAudioSender = this.pc.addTrack(track);
+    return true;
+  }
+
   private async setTrack(kind: 'audio' | 'video', track: MediaStreamTrack | null): Promise<boolean> {
     let t = this.transceiverFor(kind);
     if (!t) {
@@ -182,6 +204,8 @@ export class KapiPeer {
    *  track, so later replaceTrack upgrades them instead of adding m-lines. */
   private indexTransceivers() {
     for (const t of this.pc.getTransceivers()) {
+      // Never bind the dedicated share-audio sender as the mic transceiver.
+      if (this.shareAudioSender && t.sender === this.shareAudioSender) continue;
       const kind = (t.receiver.track?.kind ?? t.sender.track?.kind) as 'audio' | 'video' | undefined;
       if (!kind) continue;
       if (!this.transceiverFor(kind)) this.setTransceiverFor(kind, t);

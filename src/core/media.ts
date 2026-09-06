@@ -66,7 +66,10 @@ export async function getLocalStream(
 }
 
 export async function getDisplayStream(): Promise<MediaStream> {
-  return navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+  // Request tab/system audio when the browser/picker allows it. Chrome may
+  // omit the audio track if the user leaves "Share audio" unchecked — callers
+  // must treat a video-only stream as success.
+  return navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
 }
 
 export async function listDevices(): Promise<MediaDeviceInfo[]> {
