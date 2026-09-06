@@ -1,4 +1,8 @@
-import type { KapiUserPreferences, PersistedBackgroundMode } from './types';
+import type {
+  KapiAudioProcessingPreferences,
+  KapiUserPreferences,
+  PersistedBackgroundMode,
+} from './types';
 import { DEFAULT_PREFERENCES_KEY, EMPTY_PREFERENCES } from './types';
 import type { KapiLayout } from '../types';
 
@@ -38,9 +42,20 @@ function asBool(v: unknown): boolean | undefined {
   return typeof v === 'boolean' ? v : undefined;
 }
 
+function asAudioProcessing(raw: unknown): KapiAudioProcessingPreferences {
+  if (!isRecord(raw)) return {};
+  return {
+    noiseSuppression: asBool(raw.noiseSuppression),
+    echoCancellation: asBool(raw.echoCancellation),
+    autoGainControl: asBool(raw.autoGainControl),
+  };
+}
+
 /** Normalize unknown JSON into a complete preferences object. */
 export function normalizePreferences(raw: unknown): KapiUserPreferences {
-  if (!isRecord(raw)) return { ...EMPTY_PREFERENCES, devices: {}, effects: {}, ui: {} };
+  if (!isRecord(raw)) {
+    return { ...EMPTY_PREFERENCES, devices: {}, audio: {}, effects: {}, ui: {} };
+  }
   const devices = isRecord(raw.devices) ? raw.devices : {};
   const effects = isRecord(raw.effects) ? raw.effects : {};
   const ui = isRecord(raw.ui) ? raw.ui : {};
@@ -51,6 +66,7 @@ export function normalizePreferences(raw: unknown): KapiUserPreferences {
       videoInputId: asString(devices.videoInputId),
       audioOutputId: asString(devices.audioOutputId),
     },
+    audio: asAudioProcessing(raw.audio),
     effects: {
       background: asBg(effects.background),
       blurAmount: asBlur(effects.blurAmount),
@@ -59,6 +75,7 @@ export function normalizePreferences(raw: unknown): KapiUserPreferences {
       layout: asLayout(ui.layout),
       videoFit: asFit(ui.videoFit),
       shortcuts: asBool(ui.shortcuts),
+      mirror: asBool(ui.mirror),
     },
   };
 }
@@ -107,6 +124,7 @@ export function savePreferences(
 export function patchPreferences(
   patch: {
     devices?: Partial<KapiUserPreferences['devices']>;
+    audio?: Partial<KapiAudioProcessingPreferences>;
     effects?: Partial<KapiUserPreferences['effects']>;
     ui?: Partial<KapiUserPreferences['ui']>;
   },
@@ -117,6 +135,7 @@ export function patchPreferences(
     {
       version: 1,
       devices: { ...cur.devices, ...patch.devices },
+      audio: { ...cur.audio, ...patch.audio },
       effects: { ...cur.effects, ...patch.effects },
       ui: { ...cur.ui, ...patch.ui },
     },
@@ -138,6 +157,32 @@ export function withPreferredDevice(
   }
   if (constraints.deviceId !== undefined) return constraints;
   return { ...constraints, deviceId: { ideal: deviceId } };
+}
+
+/**
+ * Merge remembered mic processing flags into audio constraints when the host
+ * has not already set those keys. Leaves browser defaults alone when prefs
+ * are empty.
+ */
+export function withAudioProcessing(
+  constraints: boolean | MediaTrackConstraints | undefined,
+  processing: KapiAudioProcessingPreferences | undefined,
+): boolean | MediaTrackConstraints | undefined {
+  if (!processing || constraints === false) return constraints;
+  const patch: MediaTrackConstraints = {};
+  if (processing.noiseSuppression !== undefined) patch.noiseSuppression = processing.noiseSuppression;
+  if (processing.echoCancellation !== undefined) patch.echoCancellation = processing.echoCancellation;
+  if (processing.autoGainControl !== undefined) patch.autoGainControl = processing.autoGainControl;
+  if (!Object.keys(patch).length) return constraints;
+
+  if (constraints === true || constraints === undefined) return patch;
+  const next = { ...constraints };
+  for (const key of Object.keys(patch) as (keyof MediaTrackConstraints)[]) {
+    if (next[key] === undefined) {
+      (next as Record<string, unknown>)[key as string] = patch[key];
+    }
+  }
+  return next;
 }
 
 /** Read a deviceId string from MediaTrackConstraints (exact or ideal). */

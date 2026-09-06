@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Mirror my video** — `mirror` mount option (default `true`) and Settings → Video toggle; remembered in preferences. Local camera preview only (screen shares stay unflipped).
+- **Mic processing toggles** — Settings → Audio: noise suppression, echo cancellation, auto gain. Persisted; merged into join constraints when the host has not already set those keys on `media.audio`.
 - **Device adaptation** — proactive capture / effect presets from `deviceMemory`, CPU cores, Network Information (`saveData` / `effectiveType`), and mobile-like UA. Default on (`deviceAdaptation`); picks 720p / 540p / 360p capture ceilings, starting adaptive rungs, effect fps, and a soft `maxBitrate` on weak tiers before the first frame. Complements reactive `adaptive` encoder stepping. Helpers: `detectDeviceCapabilities`, `resolveDeviceAdaptation`; room exposes `deviceAdaptation`.
 - **Demo invite link** — lobby **Copy invite link** copies a shareable URL with the current room id (recipient picks their own name).
 

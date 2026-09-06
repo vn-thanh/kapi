@@ -44,6 +44,7 @@ export {
   patchPreferences,
   normalizePreferences,
   withPreferredDevice,
+  withAudioProcessing,
   deviceIdFromConstraint,
   DEFAULT_PREFERENCES_KEY,
   EMPTY_PREFERENCES,
@@ -51,6 +52,7 @@ export {
 export type {
   KapiUserPreferences,
   KapiPreferencesOptions,
+  KapiAudioProcessingPreferences,
   PersistedBackgroundMode,
 } from './preferences';
 export type {

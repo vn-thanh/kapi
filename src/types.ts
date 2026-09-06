@@ -316,6 +316,12 @@ export interface KapiUiLabels {
   videoFit?: string;
   videoFitContain?: string;
   videoFitCover?: string;
+  /** Mirror local camera preview toggle. */
+  mirrorVideo?: string;
+  /** Audio processing toggles (Settings → Audio). */
+  noiseSuppression?: string;
+  echoCancellation?: string;
+  autoGainControl?: string;
   /** Blur strength slider. */
   blurAmount?: string;
   /** Default layout control in General. */
@@ -353,6 +359,12 @@ export interface KapiMountOptions extends KapiRoomOptions {
    */
   videoFit?: 'contain' | 'cover';
   /**
+   * Mirror the local camera preview horizontally (Zoom/Meet default). Does not
+   * flip screen shares or remote tiles. Default `true`. Remembered in
+   * preferences when enabled; host value wins when set.
+   */
+  mirror?: boolean;
+  /**
    * Built-in UI connection indicator. Default `'bars'` when room
    * `connectionQuality` is on, else `'dot'` (legacy PC-state only).
    * `'off'` hides the indicator entirely.
@@ -373,9 +385,10 @@ export interface KapiMountOptions extends KapiRoomOptions {
    */
   reactions?: string[];
   /**
-   * Remember devices, layout, background mode, video fit, and shortcuts in
-   * `localStorage` (Zoom/Meet style). Explicit host options still win when set.
-   * Pass `{ enabled: false }` to keep the tabbed Settings UI without persistence.
+   * Remember devices, layout, background mode, video fit, mirror, shortcuts,
+   * and mic processing toggles in `localStorage` (Zoom/Meet style). Explicit
+   * host options still win when set. Pass `{ enabled: false }` to keep the
+   * tabbed Settings UI without persistence.
    */
   preferences?: import('./preferences/types').KapiPreferencesOptions;
   onHangup?: () => void;

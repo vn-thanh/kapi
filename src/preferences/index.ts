@@ -1,6 +1,7 @@
 export type {
   KapiUserPreferences,
   KapiPreferencesOptions,
+  KapiAudioProcessingPreferences,
   PersistedBackgroundMode,
 } from './types';
 export {
@@ -13,5 +14,6 @@ export {
   patchPreferences,
   normalizePreferences,
   withPreferredDevice,
+  withAudioProcessing,
   deviceIdFromConstraint,
 } from './storage';

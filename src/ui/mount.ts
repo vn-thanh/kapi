@@ -5,9 +5,10 @@ import {
   DEFAULT_PREFERENCES_KEY,
   loadPreferences,
   patchPreferences,
+  withAudioProcessing,
   withPreferredDevice,
 } from '../preferences';
-import type { PersistedBackgroundMode } from '../preferences';
+import type { KapiAudioProcessingPreferences, PersistedBackgroundMode } from '../preferences';
 import type {
   BackgroundMode,
   ConnectionQuality,
@@ -115,6 +116,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         : 'grid';
   const resolvedFit: 'contain' | 'cover' =
     options.videoFit ?? saved?.ui.videoFit ?? 'contain';
+  let mirrorOn = options.mirror ?? saved?.ui.mirror ?? true;
   let shortcutsOn = options.shortcuts ?? saved?.ui.shortcuts ?? true;
   const deviceAdapt = resolveDeviceAdaptation(options.deviceAdaptation);
   /** MediaPipe segmentation is too heavy on the lowest tier — keep effects off. */
@@ -125,9 +127,31 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     effectsHeavyBlocked && rawBg !== 'none' ? 'none' : rawBg;
   const resolvedBlur = options.effects?.blurAmount ?? saved?.effects.blurAmount;
 
+  // Host-pinned audio processing keys win; prefs fill the rest. Empty prefs
+  // leave browser defaults alone until the user toggles Settings → Audio.
+  const hostAudio =
+    options.media?.audio && typeof options.media.audio === 'object'
+      ? options.media.audio
+      : null;
+  const pickProcessing = (
+    key: 'noiseSuppression' | 'echoCancellation' | 'autoGainControl',
+  ): boolean | undefined => {
+    const hostVal = hostAudio?.[key];
+    if (typeof hostVal === 'boolean') return hostVal;
+    return saved?.audio?.[key];
+  };
+  const audioProcessing: KapiAudioProcessingPreferences = {
+    noiseSuppression: pickProcessing('noiseSuppression'),
+    echoCancellation: pickProcessing('echoCancellation'),
+    autoGainControl: pickProcessing('autoGainControl'),
+  };
+
   const joinMedia = {
     ...options.media,
-    audio: withPreferredDevice(options.media?.audio ?? true, saved?.devices.audioInputId),
+    audio: withAudioProcessing(
+      withPreferredDevice(options.media?.audio ?? true, saved?.devices.audioInputId),
+      audioProcessing,
+    ),
     // Leave bare true/undefined so resolveRoomOptions can apply the
     // device-tier capture ceiling (deviceId-only prefs still merge there).
     video: withPreferredDevice(options.media?.video, saved?.devices.videoInputId),
@@ -136,6 +160,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     ...options,
     layout: resolvedLayout,
     videoFit: resolvedFit,
+    mirror: mirrorOn,
     shortcuts: shortcutsOn,
     media: joinMedia,
     effects: {
@@ -201,15 +226,19 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     getBlurAmount: () => blurAmount,
     getLayout: () => layoutMode,
     getVideoFit: () => videoFit,
+    getMirror: () => mirrorOn,
     getShortcuts: () => shortcutsOn,
     getAudioOutputId: () => audioOutputId,
+    getAudioProcessing: () => ({ ...audioProcessing }),
     getBackgroundEffectsAllowed: () => !effectsHeavyBlocked,
     onDevicePick: (kind, deviceId) => {
       void (async () => {
         try {
           await room?.switchDevice(kind, deviceId);
-          if (kind === 'audioinput') persist({ devices: { audioInputId: deviceId } });
-          else persist({ devices: { videoInputId: deviceId } });
+          if (kind === 'audioinput') {
+            persist({ devices: { audioInputId: deviceId } });
+            await applyAudioProcessing();
+          } else persist({ devices: { videoInputId: deviceId } });
         } catch (err) {
           reportError(err);
         }
@@ -229,6 +258,12 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     },
     onLayout: (layout) => setLayout(layout),
     onVideoFit: (fit) => setVideoFit(fit),
+    onMirror: (on) => setMirror(on),
+    onAudioProcessing: (key, on) => {
+      audioProcessing[key] = on;
+      persist({ audio: { [key]: on } });
+      void applyAudioProcessing();
+    },
     onShortcuts: (on) => {
       shortcutsOn = on;
       persist({ ui: { shortcuts: on } });
@@ -604,6 +639,48 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     persist({ ui: { videoFit: fit } });
   }
 
+  function setMirror(on: boolean) {
+    if (on === mirrorOn) return;
+    mirrorOn = on;
+    persist({ ui: { mirror: on } });
+    paintLocalMirror();
+  }
+
+  function paintLocalMirror() {
+    const tile = tiles.get(selfId);
+    if (!tile) return;
+    // Never mirror a screen share — text would flip.
+    tile.wrap.classList.toggle('mirror', mirrorOn && !(room?.sharing ?? false));
+  }
+
+  async function applyAudioProcessing() {
+    if (!room || disposed) return;
+    const patch: MediaTrackConstraints = {};
+    if (audioProcessing.noiseSuppression !== undefined) {
+      patch.noiseSuppression = audioProcessing.noiseSuppression;
+    }
+    if (audioProcessing.echoCancellation !== undefined) {
+      patch.echoCancellation = audioProcessing.echoCancellation;
+    }
+    if (audioProcessing.autoGainControl !== undefined) {
+      patch.autoGainControl = audioProcessing.autoGainControl;
+    }
+    if (!Object.keys(patch).length) return;
+    const tracks = new Set<MediaStreamTrack>();
+    for (const stream of [room.localMedia].filter((s): s is MediaStream => !!s)) {
+      for (const t of stream.getAudioTracks()) {
+        if (t.readyState === 'live') tracks.add(t);
+      }
+    }
+    for (const track of tracks) {
+      try {
+        await track.applyConstraints(patch);
+      } catch (err) {
+        reportError(err);
+      }
+    }
+  }
+
   async function setAudioSink(el: HTMLMediaElement, deviceId: string) {
     const media = el as HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> };
     if (typeof media.setSinkId !== 'function') return;
@@ -829,9 +906,9 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       armFrameWatch(tile);
     }
     void tile.video.play().catch(() => undefined);
-    // Mirror the camera preview, but never a screen share (text would flip).
-    // The share preview also promotes the tile to stage layout.
-    tile.wrap.classList.toggle('mirror', !(room?.sharing ?? false));
+    // Mirror the camera preview when enabled, but never a screen share
+    // (text would flip). The share preview also promotes the tile to stage.
+    tile.wrap.classList.toggle('mirror', mirrorOn && !(room?.sharing ?? false));
     tile.wrap.classList.toggle('screenshare', room?.sharing ?? false);
     syncVideoVisibility(tile, stream);
     if (room) {
@@ -839,6 +916,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       updateMicChip(tile, stream, selfId);
     }
     applyLayout();
+    void applyAudioProcessing();
   }
 
   function mergeRemoteTrack(peerId: string, track: MediaStreamTrack): MediaStream {

@@ -192,6 +192,7 @@ Full payloads: [docs/OPTIONS.md](docs/OPTIONS.md#room-events-roomonevent-handler
 | `sidebar` | Stage + right filmstrip; follows active speaker |
 
 - **Pin any tile** by clicking it — enlarges in grid; holds the stage in spotlight/sidebar. Unpin to restore equal grid / active-speaker follow. Alone, the empty filmstrip is hidden.
+- **Settings** — Zoom-style Audio / Video / Effects / General (devices, mirror, mic processing, layout, shortcuts). Preferences persist across sessions by default.
 - **Keyboard shortcuts** — `M` mutes, `V` toggles the camera (Jitsi-style; opt out with `shortcuts: false`)
 - **Screen share always wins the stage**, rendered uncropped (`contain`) so shared content stays readable
 - **Theme with CSS variables** — `theme: { accent: '#e11d48', bg: '#0b0f14', … }`
@@ -211,13 +212,11 @@ const api = mount(el, {
   layout: 'spotlight',
   theme: { accent: '#e11d48' },
   videoFit: 'contain', // full frame at true aspect ratio; 'cover' crops
+  mirror: true,        // local camera preview (Settings → Video; default on)
   onReady: (room) => { /* room is live */ },
   onHangup: () => api.dispose(),
 })
-
-api.setLayout('sidebar') // runtime layout switch
 ```
-
 ## 🪄 Background effects
 
 All client-side via MediaPipe's selfie segmenter — the model is fetched once from the CDN (or self-host it with `effects.modelUrl`):
@@ -312,7 +311,7 @@ io.on('connection', (socket) => {
 | `videoCodec` | — | e.g. `'video/VP8'` |
 | `autoJoin` | `true` | Emit `join` immediately |
 | `leaveOnUnload` | `true` | Instant leave on tab close / refresh |
-| UI: `toolbar`, `layout`, `theme`, `labels`, `videoFit`, `connectionQualityUi` | — | See [docs/OPTIONS.md](docs/OPTIONS.md) |
+| UI: `toolbar`, `layout`, `theme`, `labels`, `videoFit`, `mirror`, `connectionQualityUi`, `preferences` | — | See [docs/OPTIONS.md](docs/OPTIONS.md) |
 
 ## 🧪 Browser support & limits
 

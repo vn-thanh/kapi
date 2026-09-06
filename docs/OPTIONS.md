@@ -132,6 +132,10 @@ may renegotiate peers.
                                   // ratio. 'cover' fills the tile and crops
                                   // overflow. Screen shares always use
                                   // 'contain' so shared content stays readable.
+  mirror?: boolean         // default true — mirror the local camera preview
+                           // (Zoom/Meet style). Does not flip screen shares
+                           // or remote tiles. Remembered in preferences;
+                           // host value wins when set. Toggle in Settings → Video.
   connectionQualityUi?: 'bars' | 'dot' | 'off'
     // default 'bars' when room connectionQuality is on, else 'dot'.
     // 'bars' = Zoom/Meet-style signal strength; 'dot' = PC-state only;
@@ -146,8 +150,10 @@ may renegotiate peers.
                            // sendReaction wire cap); max 16 shown.
   preferences?: {
     enabled?: boolean      // default true — remember devices / layout /
-                           // background mode / video fit / shortcuts in
-                           // localStorage (key default 'kapi.prefs.v1').
+                           // background mode / video fit / mirror /
+                           // shortcuts / mic processing (noise suppression,
+                           // echo cancellation, auto gain) in localStorage
+                           // (key default 'kapi.prefs.v1').
                            // Explicit host options still win when set.
                            // Custom image backgrounds are session-only.
     key?: string
@@ -165,13 +171,15 @@ The built-in **Settings** panel is a Zoom/Meet-style dialog with tabs:
 
 | Tab | Controls |
 |-----|----------|
-| Audio | Microphone, speaker (`setSinkId` when supported) |
-| Video | Camera, video fit (contain / cover) |
+| Audio | Microphone, speaker (`setSinkId` when supported), noise suppression, echo cancellation, auto gain |
+| Video | Camera, video fit (contain / cover), mirror my video |
 | Effects | Background (none / blur / remove / image), blur strength |
 | General | Default layout, keyboard shortcuts toggle |
 
 Choices persist across reloads when `preferences.enabled` is on (the default).
-The toolbar background picker remains a quick shortcut and writes the same store.
+Mic processing prefs are merged into `getUserMedia` constraints when the host
+has not already pinned those keys on `media.audio`. The toolbar background
+picker remains a quick shortcut and writes the same store.
 
 ### Built-in layout interactions
 

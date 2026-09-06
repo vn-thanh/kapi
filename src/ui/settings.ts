@@ -15,8 +15,15 @@ export type SettingsPanelCallbacks = {
   getBlurAmount: () => number;
   getLayout: () => KapiLayout;
   getVideoFit: () => 'contain' | 'cover';
+  getMirror: () => boolean;
   getShortcuts: () => boolean;
   getAudioOutputId: () => string | undefined;
+  /** Remembered / last-applied processing; undefined falls back to track settings. */
+  getAudioProcessing: () => {
+    noiseSuppression?: boolean;
+    echoCancellation?: boolean;
+    autoGainControl?: boolean;
+  };
   /** When false, blur/remove/image controls are disabled (low-tier devices). */
   getBackgroundEffectsAllowed?: () => boolean;
   onDevicePick: (kind: 'audioinput' | 'videoinput', deviceId: string) => void;
@@ -26,6 +33,11 @@ export type SettingsPanelCallbacks = {
   onBlurAmount: (amount: number) => void;
   onLayout: (layout: KapiLayout) => void;
   onVideoFit: (fit: 'contain' | 'cover') => void;
+  onMirror: (on: boolean) => void;
+  onAudioProcessing: (
+    key: 'noiseSuppression' | 'echoCancellation' | 'autoGainControl',
+    on: boolean,
+  ) => void;
   onShortcuts: (on: boolean) => void;
   onError: (err: unknown) => void;
   onClose?: () => void;
@@ -254,6 +266,24 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
         panel.appendChild(wrap);
       };
 
+      const addToggle = (
+        panel: HTMLElement,
+        label: string,
+        checked: boolean,
+        onChange: (on: boolean) => void,
+      ) => {
+        const row = document.createElement('label');
+        row.className = 'kapi-settings-toggle';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = checked;
+        input.addEventListener('change', () => onChange(input.checked));
+        const text = document.createElement('span');
+        text.textContent = label;
+        row.append(input, text);
+        panel.appendChild(row);
+      };
+
       // ---- Audio ----
       const audioPane = panels.get('audio')!;
       addSelect(
@@ -279,6 +309,24 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
         addHint(audioPane, cb.labels.speakerUnsupported);
       }
 
+      const audioTrack = room?.localMedia?.getAudioTracks().find((t) => t.readyState === 'live');
+      const trackSettings = audioTrack?.getSettings() ?? {};
+      const remembered = cb.getAudioProcessing();
+      const processingDefs: {
+        key: 'noiseSuppression' | 'echoCancellation' | 'autoGainControl';
+        label: string;
+      }[] = [
+        { key: 'noiseSuppression', label: cb.labels.noiseSuppression },
+        { key: 'echoCancellation', label: cb.labels.echoCancellation },
+        { key: 'autoGainControl', label: cb.labels.autoGainControl },
+      ];
+      for (const def of processingDefs) {
+        const fromTrack = trackSettings[def.key];
+        const checked =
+          remembered[def.key] ?? (typeof fromTrack === 'boolean' ? fromTrack : true);
+        addToggle(audioPane, def.label, checked, (on) => cb.onAudioProcessing(def.key, on));
+      }
+
       // ---- Video ----
       const videoPane = panels.get('video')!;
       addSelect(
@@ -301,6 +349,7 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
         cb.getVideoFit(),
         (fit) => cb.onVideoFit(fit),
       );
+      addToggle(videoPane, cb.labels.mirrorVideo, cb.getMirror(), (on) => cb.onMirror(on));
 
       // ---- Effects ----
       const effectsPane = panels.get('effects')!;
@@ -412,18 +461,9 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
         (layout) => cb.onLayout(layout),
       );
 
-      const shortcutsRow = document.createElement('label');
-      shortcutsRow.className = 'kapi-settings-toggle';
-      const shortcutsCheck = document.createElement('input');
-      shortcutsCheck.type = 'checkbox';
-      shortcutsCheck.checked = cb.getShortcuts();
-      shortcutsCheck.addEventListener('change', () => {
-        cb.onShortcuts(shortcutsCheck.checked);
+      addToggle(generalPane, cb.labels.shortcutsToggle, cb.getShortcuts(), (on) => {
+        cb.onShortcuts(on);
       });
-      const shortcutsText = document.createElement('span');
-      shortcutsText.textContent = cb.labels.shortcutsToggle;
-      shortcutsRow.append(shortcutsCheck, shortcutsText);
-      generalPane.appendChild(shortcutsRow);
       addHint(generalPane, cb.labels.shortcutsHint);
     } finally {
       rendering = false;

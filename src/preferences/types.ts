@@ -3,6 +3,13 @@ import type { BackgroundMode, KapiLayout } from '../types';
 /** Persisted background modes — custom image URLs are session-only (blob). */
 export type PersistedBackgroundMode = Extract<BackgroundMode, 'none' | 'blur' | 'remove'>;
 
+/** Browser audio-processing flags remembered across sessions. */
+export interface KapiAudioProcessingPreferences {
+  noiseSuppression?: boolean;
+  echoCancellation?: boolean;
+  autoGainControl?: boolean;
+}
+
 /**
  * User preferences remembered across sessions (Zoom/Meet/Discord style).
  * Host mount options still win when explicitly set.
@@ -14,6 +21,8 @@ export interface KapiUserPreferences {
     videoInputId?: string;
     audioOutputId?: string;
   };
+  /** Mic processing toggles (applied via `MediaTrackConstraints`). */
+  audio?: KapiAudioProcessingPreferences;
   effects: {
     background?: PersistedBackgroundMode;
     blurAmount?: number;
@@ -22,6 +31,8 @@ export interface KapiUserPreferences {
     layout?: KapiLayout;
     videoFit?: 'contain' | 'cover';
     shortcuts?: boolean;
+    /** Mirror the local camera preview (not screen shares). */
+    mirror?: boolean;
   };
 }
 
@@ -39,6 +50,7 @@ export const DEFAULT_PREFERENCES_KEY = 'kapi.prefs.v1';
 export const EMPTY_PREFERENCES: KapiUserPreferences = {
   version: 1,
   devices: {},
+  audio: {},
   effects: {},
   ui: {},
 };
