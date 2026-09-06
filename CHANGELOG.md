@@ -4,8 +4,35 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project is maintained by [release-please](https://github.com/googleapis/release-please) — future entries are generated automatically from Conventional Commits.
 
-## [1.2.0](https://github.com/vn-thanh/kapi/compare/v1.1.0...v1.2.0) (2026-09-05)
+## [Unreleased]
 
+## [1.3.0](https://github.com/vn-thanh/kapi/compare/v1.2.0...v1.3.0) (2026-09-06)
+
+### Added
+
+- **Screen-share audio** — `getDisplayMedia` requests tab/system audio and sends it on a dedicated outbound track so mic mute never silences the shared tab. `media-state.shareAudio` is broadcast to peers; the UI shows a ♪ chip and toolbar tip when share audio is active. Falls back to video-only capture when the browser rejects audio in the display-media constraint.
+- **`setIdentity({ displayName?, avatarUrl? })`** — mid-call name/avatar updates via `peer-meta` signaling; the built-in UI refreshes tile and roster labels live. Send `avatarUrl: ''` to clear a stored avatar.
+- **Background image picker** — the background toolbar control opens a picker (None / Blur / Remove / Image…) instead of only cycling blur/remove; Image… applies a local file as a virtual background via `setBackground`.
+- **Persisted preferences panel** — devices, layout, background effects, and keyboard shortcuts are remembered across sessions; settings move into a Zoom-style tabbed dialog, the default toolbar is decluttered, pinned grid tiles are larger, and empty filmstrips hide when you are alone.
+
+### Changed
+
+- **True camera-off** — `setCam(false)` uses `replaceTrack(null)` and stops the capture track (camera LED off / no black frames). Re-acquires the camera on `setCam(true)`.
+- **Smoother reaction floats** — per-keyframe timing keeps the pop on the first segments and eases the flight as one segment; the float layer is promoted with `will-change`.
+
+### Fixed
+
+- **Cam-off during screen share** — `setCam(false)` no longer stops the display track that the local preview shares with outbound video.
+- **Partial `peer-meta` merge** — name-only updates no longer clear a stored avatar; avatar-only updates keep the existing tile label instead of falling back to the raw peer id.
+- **Background leak on hangup** — raced `BackgroundProcessor` starts are aborted after leave so effects cannot keep running after hangup.
+- **Stale preferred devices** — when a remembered `deviceId` is gone, mic/cam fall back instead of sticking “on” without tracks; device picks persist only after `switchDevice` succeeds.
+- **Background Worker stall** — the Worker acks dropped frames so the segmentation pipeline cannot wedge.
+
+### Performance Improvements
+
+- **MediaPipe in a Worker** — selfie segmentation prefers a module Worker off the main thread, with an automatic main-thread fallback if the Worker fails to load.
+
+## [1.2.0](https://github.com/vn-thanh/kapi/compare/v1.1.0...v1.2.0) (2026-09-05)
 
 ### Features
 
@@ -15,33 +42,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 * overridable device/muted labels and a layout tooltip that tracks the view ([61db628](https://github.com/vn-thanh/kapi/commit/61db628920359196abab4eeb37fa19c12ab8e874))
 * support custom peer avatars and clearer hang-up icon ([dd63314](https://github.com/vn-thanh/kapi/commit/dd6331498f9eadcfcbcfbde7dee62ba2205e224a))
 
-
 ### Bug Fixes
 
 * a throwing signal adapter can no longer wedge negotiation or hangup ([82560ce](https://github.com/vn-thanh/kapi/commit/82560ce629467ce140a847da4a9e8a75858c1a1c))
 
-
 ### Performance Improvements
 
 * reuse the segmentation mask raster instead of allocating one per frame ([f0653c2](https://github.com/vn-thanh/kapi/commit/f0653c20df412590174335ae903eb37772becb40))
-
-## [Unreleased]
-
-### Added
-
-- **Screen-share audio** — `getDisplayMedia` requests tab/system audio; sent on a dedicated outbound track (mic mute does not silence the share). `media-state.shareAudio` + UI ♪ chip / toolbar tip.
-- **`setIdentity({ displayName?, avatarUrl? })`** — live name/avatar updates via `peer-meta` signaling (built-in UI listens).
-- **Background Worker** — MediaPipe segmentation prefers a module Worker; falls back to the main thread if the worker fails to load.
-
-### Changed
-
-- **True camera-off** — `setCam(false)` uses `replaceTrack(null)` and stops the capture track (LED off / no black frames). Re-acquires on `setCam(true)`.
-
-### Fixed
-
-- **Cam-off during screen share** — `setCam(false)` no longer stops the display track that the local preview shares with outbound video.
-- **Partial `peer-meta` in UI** — avatar-only updates keep the existing tile name instead of falling back to the raw peer id.
-- **Partial `peer-meta` merge** — name-only updates no longer clear a stored avatar; `setIdentity` sends `avatarUrl: ''` to clear, and the background Worker acks dropped frames so the pipeline cannot stall.
 
 ## [1.1.0](https://github.com/vn-thanh/kapi/releases/tag/v1.1.0) (2026-09-05)
 
