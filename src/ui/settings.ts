@@ -218,7 +218,6 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
         cb.labels.noMic,
         (id) => {
           cb.onDevicePick('audioinput', id);
-          void room?.switchDevice('audioinput', id).catch(cb.onError);
         },
       );
       if (supportsSinkId()) {
@@ -244,7 +243,6 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
         cb.labels.noCam,
         (id) => {
           cb.onDevicePick('videoinput', id);
-          void room?.switchDevice('videoinput', id).catch(cb.onError);
         },
       );
 

@@ -716,16 +716,17 @@ export class KapiRoom {
     const baseVideo =
       media.video === undefined || media.video === true ? DEFAULT_VIDEO : media.video;
 
-    const constraints =
+    const preferred =
+      kind === 'audio' ? this.preferredAudioDeviceId : this.preferredVideoDeviceId;
+
+    const buildConstraints = (deviceId: string | undefined): MediaStreamConstraints =>
       kind === 'audio'
         ? {
             audio:
-              typeof baseAudio === 'object' || this.preferredAudioDeviceId
+              typeof baseAudio === 'object' || deviceId
                 ? {
                     ...(typeof baseAudio === 'object' ? baseAudio : {}),
-                    ...(this.preferredAudioDeviceId
-                      ? { deviceId: { exact: this.preferredAudioDeviceId } }
-                      : {}),
+                    ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
                   }
                 : baseAudio,
             video: false as const,
@@ -733,24 +734,33 @@ export class KapiRoom {
         : {
             audio: false as const,
             video:
-              typeof baseVideo === 'object' || this.preferredVideoDeviceId
+              typeof baseVideo === 'object' || deviceId
                 ? {
                     ...(typeof baseVideo === 'object' ? baseVideo : {}),
-                    ...(this.preferredVideoDeviceId
-                      ? { deviceId: { exact: this.preferredVideoDeviceId } }
-                      : {}),
+                    ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
                   }
                 : baseVideo,
           };
 
-    const stream = await getLocalStream(constraints);
+    // Prefer the remembered device, then soft-fall back without exact id
+    // (stale prefs / unplugged cams must not leave mic/cam "on" with no track).
+    let stream = await getLocalStream(buildConstraints(preferred));
+    let track =
+      kind === 'audio' ? stream.getAudioTracks()[0] : stream.getVideoTracks()[0];
+    if (!track && preferred) {
+      if (kind === 'audio') this.preferredAudioDeviceId = undefined;
+      else this.preferredVideoDeviceId = undefined;
+      stream.getTracks().forEach((t) => t.stop());
+      stream = await getLocalStream(buildConstraints(undefined));
+      track = kind === 'audio' ? stream.getAudioTracks()[0] : stream.getVideoTracks()[0];
+    }
     if (this.closed) {
       stream.getTracks().forEach((t) => t.stop());
       return;
     }
-    const track =
-      kind === 'audio' ? stream.getAudioTracks()[0] : stream.getVideoTracks()[0];
-    if (!track) return;
+    if (!track) {
+      throw new Error(kind === 'audio' ? 'No microphone available' : 'No camera available');
+    }
 
     if (!this.rawCameraStream) this.rawCameraStream = new MediaStream();
     // Drop dead tracks of the same kind before attaching the fresh one.
@@ -1045,11 +1055,15 @@ export class KapiRoom {
       });
     }
     const processed = await this.background.start(this.rawCameraStream, mode);
-    // A newer setBackground/hangup superseded this start — drop its output.
+    // A newer setBackground/hangup superseded this start — drop its output
+    // and tear the processor down so a raced start() cannot leave a live
+    // worker/rAF after hangup nulled `this.background`.
     if (seq !== this.backgroundSeq || this.closed) {
       processed.getTracks().forEach((t) => {
         if (t.kind === 'video') t.stop();
       });
+      this.background?.stop();
+      this.background = null;
       return;
     }
     this.localStream = processed;
@@ -1089,7 +1103,6 @@ export class KapiRoom {
   async switchDevice(kind: 'audioinput' | 'videoinput', deviceId: string) {
     if (this.closed) return;
     if (kind === 'audioinput') {
-      this.preferredAudioDeviceId = deviceId;
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { deviceId: { exact: deviceId } },
         video: false,
@@ -1101,6 +1114,7 @@ export class KapiRoom {
       }
       const track = stream.getAudioTracks()[0];
       if (!track) return;
+      this.preferredAudioDeviceId = deviceId;
       for (const [id, peer] of this.peers) {
         if (await peer.replaceTrack('audio', track)) await this.negotiate(id);
       }
@@ -1125,7 +1139,6 @@ export class KapiRoom {
       return;
     }
 
-    this.preferredVideoDeviceId = deviceId;
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { deviceId: { exact: deviceId } },
       audio: false,
@@ -1136,6 +1149,7 @@ export class KapiRoom {
     }
     const track = stream.getVideoTracks()[0];
     if (!track) return;
+    this.preferredVideoDeviceId = deviceId;
     if (this.rawCameraStream) {
       const old = this.rawCameraStream.getVideoTracks()[0];
       if (old) {

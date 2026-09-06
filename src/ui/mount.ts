@@ -201,8 +201,15 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     getShortcuts: () => shortcutsOn,
     getAudioOutputId: () => audioOutputId,
     onDevicePick: (kind, deviceId) => {
-      if (kind === 'audioinput') persist({ devices: { audioInputId: deviceId } });
-      else persist({ devices: { videoInputId: deviceId } });
+      void (async () => {
+        try {
+          await room?.switchDevice(kind, deviceId);
+          if (kind === 'audioinput') persist({ devices: { audioInputId: deviceId } });
+          else persist({ devices: { videoInputId: deviceId } });
+        } catch (err) {
+          reportError(err);
+        }
+      })();
     },
     onAudioOutputPick: (deviceId) => {
       audioOutputId = deviceId;
@@ -1427,6 +1434,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     disposed = true;
     clearTimeout(toastTimer);
     clearInterval(frameWatchdog);
+    if (bgImageUrl) {
+      URL.revokeObjectURL(bgImageUrl);
+      bgImageUrl = null;
+    }
     for (const tile of tiles.values()) {
       if (tile.frameHandle !== null) tile.video.cancelVideoFrameCallback(tile.frameHandle);
     }

@@ -87,6 +87,7 @@ export class BackgroundProcessor {
   private async ensureWorker(): Promise<boolean> {
     if (this.useWorker && this.worker) return true;
     if (this.workerReady) return this.workerReady;
+    const gen = this.generation;
     this.workerReady = (async () => {
       const worker = this.spawnWorker();
       if (!worker) return false;
@@ -114,6 +115,16 @@ export class BackgroundProcessor {
           resolve(false);
         };
       });
+      // stop()/hangup raced ahead — never adopt this worker.
+      if (gen !== this.generation) {
+        try {
+          worker.postMessage({ type: 'close' });
+        } catch {
+          // ignore
+        }
+        worker.terminate();
+        return false;
+      }
       if (!ok) {
         worker.terminate();
         return false;
@@ -138,6 +149,7 @@ export class BackgroundProcessor {
     })();
     const result = await this.workerReady;
     if (!result) this.workerReady = null;
+    if (gen !== this.generation) return false;
     return result;
   }
 
@@ -184,19 +196,32 @@ export class BackgroundProcessor {
   }
 
   async start(source: MediaStream, mode: BackgroundMode): Promise<MediaStream> {
+    const gen = this.generation;
     this.mode = mode;
     if (typeof mode === 'object' && mode.image) {
       this.bgImage = await loadImage(mode.image);
     } else {
       this.bgImage = null;
     }
+    if (gen !== this.generation) {
+      return new MediaStream(source.getAudioTracks());
+    }
 
     const workerOk = await this.ensureWorker();
+    if (gen !== this.generation) {
+      return new MediaStream(source.getAudioTracks());
+    }
     if (!workerOk) {
       const seg = await this.ensureSegmenter();
-      if (!seg) return new MediaStream(source.getAudioTracks());
+      if (gen !== this.generation || !seg) {
+        return new MediaStream(source.getAudioTracks());
+      }
     } else if (this.worker && this.bgImage) {
       const bmp = await createImageBitmap(this.bgImage);
+      if (gen !== this.generation) {
+        bmp.close();
+        return new MediaStream(source.getAudioTracks());
+      }
       this.worker.postMessage({ type: 'setBgImage', bitmap: bmp }, { transfer: [bmp] });
     } else if (this.worker) {
       this.worker.postMessage({ type: 'setBgImage', bitmap: null });
@@ -209,9 +234,13 @@ export class BackgroundProcessor {
     }
     this.video.srcObject = source;
     await this.video.play();
+    if (gen !== this.generation) {
+      return new MediaStream(source.getAudioTracks());
+    }
     await waitForVideoDimensions(this.video);
-
-    if (!this.video) return new MediaStream(source.getAudioTracks());
+    if (gen !== this.generation || !this.video) {
+      return new MediaStream(source.getAudioTracks());
+    }
 
     const w = this.video.videoWidth || 640;
     const h = this.video.videoHeight || 480;
