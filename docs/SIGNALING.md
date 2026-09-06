@@ -1,6 +1,8 @@
 # Signaling integration
 
-Generic guide for wiring `@vn-thanh/kapi` into any host app. Cursor agents: prefer `.cursor/skills/integrate-kapi/SKILL.md`.
+Generic guide for wiring `@vn-thanh/kapi` into any host app.
+
+Coding agents: start with [`llms.txt`](../llms.txt), then this file, then the Cursor skill [`.cursor/skills/integrate-kapi/SKILL.md`](../.cursor/skills/integrate-kapi/SKILL.md) (raw: `https://raw.githubusercontent.com/vn-thanh/kapi/main/.cursor/skills/integrate-kapi/SKILL.md`).
 
 ## Contract
 

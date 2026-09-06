@@ -23,7 +23,8 @@
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
-    "docs"
+    "docs",
+    "llms.txt"
   ],
   "repository": {
     "type": "git",
@@ -37,8 +38,15 @@
     "webrtc",
     "p2p",
     "mesh",
+    "webrtc-mesh",
+    "peer-to-peer",
     "video-call",
     "audio-call",
+    "video-conference",
+    "signaling",
+    "socket-io",
+    "no-sfu",
+    "browser-webrtc",
     "background-removal",
     "kapi"
   ],

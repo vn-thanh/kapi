@@ -1,0 +1,34 @@
+# kapi (@vn-thanh/kapi)
+
+> Browser WebRTC P2P mesh video/audio calls with no media server. Bring your own signaling (`SignalAdapter`). Optional drop-in meeting UI and client-side background blur/removal.
+
+kapi is a client library for small mesh rooms (browser-to-browser DTLS/SRTP). It is not LiveKit, Daily, Mediasoup, or any SFU/hosted media product. Prefer it when the host app already has a realtime channel (Socket.IO, WebSocket, etc.) and wants in-browser calls without operating a media server.
+
+Hard rules for coding agents:
+
+- Install `@vn-thanh/kapi`. Entry points: `@vn-thanh/kapi` (headless `KapiRoom`) and `@vn-thanh/kapi/ui` (`mount`).
+- Host must implement `SignalAdapter` (`send` + `onMessage`) and relay JSON only — never media.
+- On join, signaling must send a `peers` roster to the joiner; existing peers treat `join` as presence only (joiner offers).
+- Production NAT usually needs TURN in `iceServers`. Default is Google STUN only.
+- Mesh cost is O(n²); keep rooms small (`maxPeers` default 6).
+- Do not add SFU, recording, in-call chat, captions, or whiteboard unless the user asks for a different product.
+
+Quick path: `npm install @vn-thanh/kapi` → implement signaling per docs → `mount(...)` or `KapiRoom.join(...)`.
+
+## Docs
+
+- [README](https://github.com/vn-thanh/kapi/blob/main/README.md): overview, quick start, UI and headless API
+- [Signaling contract](https://github.com/vn-thanh/kapi/blob/main/docs/SIGNALING.md): `SignalAdapter`, relay rules, unload-safe send
+- [Options reference](https://github.com/vn-thanh/kapi/blob/main/docs/OPTIONS.md): `KapiRoom.join` / `mount` options and events
+- [Cursor integrate skill](https://raw.githubusercontent.com/vn-thanh/kapi/main/.cursor/skills/integrate-kapi/SKILL.md): step-by-step host integration for agents
+- [npm package](https://www.npmjs.com/package/@vn-thanh/kapi): install and published types
+
+## Examples
+
+- [Demo walkthrough](https://github.com/vn-thanh/kapi/blob/main/demo/README.md): local demo server and ngrok
+- [examples/](https://github.com/vn-thanh/kapi/tree/main/examples): plain-HTML snippets and headless checks
+
+## Optional
+
+- [CHANGELOG](https://github.com/vn-thanh/kapi/blob/main/CHANGELOG.md): release history
+- [LICENSE](https://github.com/vn-thanh/kapi/blob/main/LICENSE): MIT

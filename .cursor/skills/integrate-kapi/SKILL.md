@@ -1,16 +1,21 @@
 ---
 name: integrate-kapi
 description: >-
-  Integrate @vn-thanh/kapi P2P mesh video/audio calls into a host web app
-  with a signaling channel (e.g. Socket.IO). Use when the user asks to add
-  kapi, wire WebRTC P2P meetings, or implement SignalAdapter signaling.
+  Integrate @vn-thanh/kapi browser WebRTC P2P mesh video/audio calls into a
+  host web app with pluggable signaling (Socket.IO, WebSocket, etc.). Use when
+  the user asks for kapi, in-browser peer-to-peer meetings without an SFU/media
+  server, SignalAdapter wiring, or mesh WebRTC rooms.
 ---
 
 # Integrate @vn-thanh/kapi
 
 Read this skill fully, then implement end-to-end in the **host** application. The library is host-agnostic; only the host owns rooms, auth, and signaling transport.
 
-Package: `@vn-thanh/kapi`. Docs: package README + `docs/OPTIONS.md`. Local clone often at a path like `.../kapi` or `https://github.com/vn-thanh/kapi`.
+Package: `@vn-thanh/kapi`.
+
+Docs (read in order when unsure): [`llms.txt`](https://raw.githubusercontent.com/vn-thanh/kapi/main/llms.txt) → package README → `docs/SIGNALING.md` → `docs/OPTIONS.md`.
+
+Repo: `https://github.com/vn-thanh/kapi`. This skill raw URL: `https://raw.githubusercontent.com/vn-thanh/kapi/main/.cursor/skills/integrate-kapi/SKILL.md`.
 
 ## Hard rules
 
