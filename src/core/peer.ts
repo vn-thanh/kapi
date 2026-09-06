@@ -71,6 +71,8 @@ export class KapiPeer {
   private readonly adaptive: boolean;
   /** Auto quality state: current rung (stats-driven), hysteresis counters. */
   private rungIndex = 0;
+  /** Best quality rung this sender may climb back to (device-tier floor). */
+  private readonly bestRung: number;
   private downTicks = 0;
   private upTicks = 0;
   /** How big our video renders on THIS receiver's screen (device px). */
@@ -95,13 +97,32 @@ export class KapiPeer {
     iceServers: RTCIceServer[],
     polite: boolean,
     private readonly cb: PeerCallbacks,
-    opts: { videoCodec?: string; maxBitrate?: number; adaptive?: boolean } = {},
+    opts: {
+      videoCodec?: string;
+      maxBitrate?: number;
+      adaptive?: boolean;
+      /** Starting adaptive rung (0 = best). Clamped to VIDEO_RUNGS. */
+      initialRung?: number;
+      /** Best rung index this device may recover to (default 0). */
+      bestRung?: number;
+    } = {},
   ) {
     this.peerId = peerId;
     this.polite = polite;
     this.videoCodec = opts.videoCodec;
     this.maxBitrate = opts.maxBitrate;
     this.adaptive = opts.adaptive ?? true;
+    const last = VIDEO_RUNGS.length - 1;
+    const best =
+      typeof opts.bestRung === 'number' && Number.isFinite(opts.bestRung)
+        ? Math.min(last, Math.max(0, Math.round(opts.bestRung)))
+        : 0;
+    this.bestRung = best;
+    const initial =
+      typeof opts.initialRung === 'number' && Number.isFinite(opts.initialRung)
+        ? Math.min(last, Math.max(best, Math.round(opts.initialRung)))
+        : best;
+    this.rungIndex = initial;
     this.pc = new RTCPeerConnection({ iceServers });
     this.pc.onicecandidate = (e) => {
       if (e.candidate) this.cb.onIce(e.candidate.toJSON());
@@ -331,7 +352,7 @@ export class KapiPeer {
     } else {
       this.upTicks++;
       this.downTicks = 0;
-      if (this.upTicks >= UP_TICKS && this.rungIndex > 0) {
+      if (this.upTicks >= UP_TICKS && this.rungIndex > this.bestRung) {
         this.rungIndex--;
         this.upTicks = 0;
       }

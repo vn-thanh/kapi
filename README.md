@@ -298,15 +298,16 @@ io.on('connection', (socket) => {
 |--------|---------|--------|
 | `iceServers` | Google STUN | Add TURN for corporate NATs |
 | `maxPeers` | `6` | Mesh upload cost is O(n²) per peer |
-| `media.audio` / `media.video` | `true` (video → 720p-ideal) | Any `getUserMedia` constraints |
+| `media.audio` / `media.video` | `true` (video → device-tier ideal) | Any `getUserMedia` constraints; bare video uses 720p / 540p / 360p from `deviceAdaptation` |
 | `media.startMic` / `media.startCam` | `false` | Initial mic/cam after join |
 | `media.acquire` | `'join'` | `'on-enable'` = acquire only when toggled on |
 | `effects.background` | `'none'` | `'blur'` \| `'remove'` \| `{ image }` |
-| `effects.blurAmount` | `12` | CSS blur px |
+| `effects.blurAmount` | tier default (8–12) | CSS blur px; omitted → device tier |
 | `effects.modelUrl` | MediaPipe CDN | Self-host the segmenter model |
 | `polite` | `true` | Perfect-negotiation glare handling |
-| `maxBitrate` | — | Video sender cap (bps); hard cap when `adaptive` is on |
+| `maxBitrate` | soft cap on weak tiers | Video sender cap (bps); hard cap when `adaptive` is on |
 | `adaptive` | `true` | Auto video quality: resolution/bitrate/fps follow link health and each receiver's tile size; screen share stays sharp at low fps |
+| `deviceAdaptation` | `true` | Proactive capture / effect presets from device + network hints; `{ tier: 'low'\|'medium'\|'high' }` to force |
 | `connectionQuality` | `true` | Per-peer signal quality (`connection-quality` event); tune `intervalMs` / `thresholds` |
 | `videoCodec` | — | e.g. `'video/VP8'` |
 | `autoJoin` | `true` | Emit `join` immediately |

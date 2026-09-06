@@ -389,7 +389,9 @@ export function injectStyles() {
   gap: 8px;
   justify-content: center;
   max-width: calc(100% - 24px);
-  margin: 4px 12px 14px;
+  margin: 4px max(12px, env(safe-area-inset-right, 0px))
+    max(14px, env(safe-area-inset-bottom, 0px))
+    max(12px, env(safe-area-inset-left, 0px));
   padding: 8px 12px;
   border-radius: 999px;
   background: var(--kapi-toolbar, rgba(13, 17, 23, 0.78));
@@ -909,7 +911,7 @@ export function injectStyles() {
 .kapi-toast {
   position: absolute;
   left: 50%;
-  bottom: 86px;
+  bottom: calc(86px + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
   z-index: 6;
   max-width: min(520px, 92%);

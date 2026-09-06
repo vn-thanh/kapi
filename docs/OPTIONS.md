@@ -16,8 +16,9 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
   media?: {
     audio?: boolean | MediaTrackConstraints
     video?: boolean | MediaTrackConstraints  // bare true/omitted defaults to
-                                             // 720p-ideal (caps 1080p/4K webcams,
-                                             // never blocks lower-default cams)
+                                             // a device-tier capture ceiling
+                                             // (720p / 540p / 360p via
+                                             // deviceAdaptation; see below)
     startMic?: boolean       // default false — mic off until user unmutes
     startCam?: boolean       // default false — camera off until user starts it
     acquire?: 'join' | 'on-enable'
@@ -31,16 +32,27 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
   effects?: {
     background?: 'none' | 'blur' | 'remove' | { image: string }
     modelUrl?: string
-    blurAmount?: number      // default 12
+    blurAmount?: number      // default from device tier (8–12) when omitted
   }
   polite?: boolean           // default true
-  maxBitrate?: number        // with adaptive on (default), a hard cap over the rung bitrate
+  maxBitrate?: number        // with adaptive on (default), a hard cap over the rung bitrate;
+                             // weak device tiers also apply a soft default cap when omitted
   adaptive?: boolean         // default true — per-connection video quality engine:
                              // steps resolution/bitrate/fps down while the link reports
                              // bandwidth/CPU limitation (Zoom/Jitsi-style), back up when
                              // it recovers, never sends more resolution than the receiver's
                              // tile renders ('video-hint' message), keeps screen shares
                              // full-res at low fps. Set false for pre-1.x static behavior.
+  deviceAdaptation?: boolean | {
+    enabled?: boolean        // default true
+    tier?: 'auto' | 'low' | 'medium' | 'high'
+                             // auto (default): score from deviceMemory /
+                             // hardwareConcurrency / Network Information
+                             // (saveData, effectiveType) / mobile-like UA
+  }
+  // Proactive capture + effect presets (default on). Complements adaptive:
+  // picks 720p/540p/360p capture, starting rungs, effect fps, and optional
+  // soft maxBitrate *before* the first frame. Pass false for static 720p.
   connectionQuality?: boolean | {
     enabled?: boolean        // default true
     intervalMs?: number      // default 3000 (min 500)

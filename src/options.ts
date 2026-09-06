@@ -6,6 +6,12 @@ import type {
   KapiUiTheme,
   ToolbarButton,
 } from './types';
+import {
+  applyDeviceVideoConstraints,
+  resolveDeviceAdaptation,
+  VIDEO_CONSTRAINTS_HIGH,
+} from './core/device';
+import type { ResolvedDeviceAdaptation } from './core/device';
 import { DEFAULT_QUALITY_THRESHOLDS } from './core/quality';
 
 export const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
@@ -16,15 +22,13 @@ export const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
 export const DEFAULT_MAX_PEERS = 6;
 
 /**
- * Capture ceiling when the caller passes `video: true`: 720p keeps modern
- * 1080p/4K webcams from burning CPU and uplink on pixels the mesh rarely
- * needs. `ideal` (not `exact`/`max`) — lower-default cameras are untouched
- * and the adaptive engine scales down from whatever it gets.
+ * Capture ceiling when device adaptation is off (or high-tier): 720p keeps
+ * modern 1080p/4K webcams from burning CPU and uplink. `ideal` (not
+ * `exact`/`max`) — lower-default cameras are untouched and the adaptive
+ * engine scales down from whatever it gets. With `deviceAdaptation` on
+ * (default), weaker devices get 540p / 360p ceilings instead.
  */
-export const DEFAULT_VIDEO: MediaTrackConstraints = {
-  width: { ideal: 1280 },
-  height: { ideal: 720 },
-};
+export const DEFAULT_VIDEO: MediaTrackConstraints = { ...VIDEO_CONSTRAINTS_HIGH };
 
 export const DEFAULT_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
@@ -60,7 +64,9 @@ export const DEFAULT_LABELS: Required<KapiUiLabels> = {
   noCam: 'No camera found',
   share: 'Share screen',
   stopShare: 'Stop sharing',
+  noShare: 'Screen sharing is not supported here',
   shareWithAudio: 'Sharing with audio',
+  permissionDenied: 'Permission denied — check camera, mic, or screen sharing access',
   react: 'React',
   participants: 'Participants',
   background: 'Background',
@@ -156,7 +162,10 @@ export function resolveRoomOptions(opts: KapiRoomOptions): Required<
 > &
   KapiRoomOptions & {
     connectionQualityResolved: ResolvedConnectionQuality;
+    deviceAdaptationResolved: ResolvedDeviceAdaptation;
   } {
+  const deviceAdaptationResolved = resolveDeviceAdaptation(opts.deviceAdaptation);
+  const preset = deviceAdaptationResolved.preset;
   const videoOpt = opts.media?.video;
   return {
     ...opts,
@@ -165,9 +174,13 @@ export function resolveRoomOptions(opts: KapiRoomOptions): Required<
     maxPeers: opts.maxPeers ?? DEFAULT_MAX_PEERS,
     media: {
       audio: opts.media?.audio ?? true,
-      // Explicit constraints pass through untouched; bare `true`/omitted gets
-      // the 720p-ideal ceiling.
-      video: videoOpt === undefined || videoOpt === true ? DEFAULT_VIDEO : videoOpt,
+      // Bare true/omitted (and deviceId-only prefs) pick up the tier ceiling;
+      // host-pinned width/height win.
+      video: applyDeviceVideoConstraints(
+        videoOpt,
+        preset,
+        deviceAdaptationResolved.enabled,
+      ),
       startMic: opts.media?.startMic ?? false,
       startCam: opts.media?.startCam ?? false,
       acquire: opts.media?.acquire ?? 'join',
@@ -175,12 +188,15 @@ export function resolveRoomOptions(opts: KapiRoomOptions): Required<
     effects: {
       background: opts.effects?.background ?? 'none',
       modelUrl: opts.effects?.modelUrl ?? DEFAULT_MODEL_URL,
-      blurAmount: opts.effects?.blurAmount ?? 12,
+      blurAmount: opts.effects?.blurAmount ?? preset.blurAmount,
     },
+    // Soft uplink cap on weak tiers when the host did not set one.
+    maxBitrate: opts.maxBitrate ?? preset.maxBitrate,
     polite: opts.polite ?? true,
     autoJoin: opts.autoJoin ?? true,
     leaveOnUnload: opts.leaveOnUnload ?? true,
     adaptive: opts.adaptive ?? true,
     connectionQualityResolved: resolveConnectionQuality(opts.connectionQuality),
+    deviceAdaptationResolved,
   };
 }

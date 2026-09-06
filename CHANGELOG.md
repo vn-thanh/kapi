@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Device adaptation** — proactive capture / effect presets from `deviceMemory`, CPU cores, Network Information (`saveData` / `effectiveType`), and mobile-like UA. Default on (`deviceAdaptation`); picks 720p / 540p / 360p capture ceilings, starting adaptive rungs, effect fps, and a soft `maxBitrate` on weak tiers before the first frame. Complements reactive `adaptive` encoder stepping. Helpers: `detectDeviceCapabilities`, `resolveDeviceAdaptation`; room exposes `deviceAdaptation`.
+- **Demo invite link** — lobby **Copy invite link** copies a shareable URL with the current room id (recipient picks their own name).
+
+### Changed
+
+- **Settings Escape / `aria-modal`** — Escape closes the settings dialog and participants pane; settings uses `aria-modal="true"`.
+- **Mobile safe-area** — toolbar and toast respect `env(safe-area-inset-*)` so home-indicator devices do not cover mute / hangup.
+- **Screen-share UX** — Share dims when `getDisplayMedia` is missing; permission denials use a friendly toast; dismissing the share picker no longer surfaces an error.
 ## [1.3.0](https://github.com/vn-thanh/kapi/compare/v1.2.0...v1.3.0) (2026-09-06)
 
 ### Added

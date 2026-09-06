@@ -59,7 +59,7 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanel {
   el.className = 'kapi-panel kapi-settings hidden';
   el.setAttribute('role', 'dialog');
   el.setAttribute('aria-label', cb.labels.settings);
-  el.setAttribute('aria-modal', 'false');
+  el.setAttribute('aria-modal', 'true');
 
   let activeTab: SettingsTab = 'audio';
   let rendering = false;

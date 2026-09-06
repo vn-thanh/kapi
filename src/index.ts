@@ -11,6 +11,20 @@ export {
   DEFAULT_QUALITY_THRESHOLDS,
 } from './core/quality';
 export type { QualitySample } from './core/quality';
+export {
+  detectDeviceCapabilities,
+  scoreDeviceTier,
+  presetForTier,
+  resolveDeviceAdaptation,
+  applyDeviceVideoConstraints,
+  DEVICE_PRESETS,
+  VIDEO_CONSTRAINTS_HIGH,
+} from './core/device';
+export type {
+  DeviceCapabilities,
+  DevicePreset,
+  ResolvedDeviceAdaptation,
+} from './core/device';
 export { BackgroundProcessor } from './effects/background';
 export {
   DEFAULT_ICE_SERVERS,
@@ -48,6 +62,8 @@ export type {
   KapiMediaOptions,
   KapiMediaAcquire,
   KapiEffectsOptions,
+  KapiDeviceAdaptationOptions,
+  DeviceTier,
   KapiMountOptions,
   KapiMountHandle,
   KapiConnectionQualityOptions,

@@ -11,7 +11,7 @@ Hard rules for coding agents:
 - On join, signaling must send a `peers` roster to the joiner; existing peers treat `join` as presence only (joiner offers).
 - Production NAT usually needs TURN in `iceServers`. Default is Google STUN only.
 - Mesh cost is O(n²); keep rooms small (`maxPeers` default 6).
-- Do not add SFU, recording, in-call chat, captions, or whiteboard unless the user asks for a different product.
+- Default `adaptive` + `deviceAdaptation` tune send quality to link pressure and device tier; do not add SFU, recording, in-call chat, captions, or whiteboard unless the user asks for a different product.
 
 Quick path: `npm install @vn-thanh/kapi` → implement signaling per docs → `mount(...)` or `KapiRoom.join(...)`.
 

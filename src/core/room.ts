@@ -1,4 +1,4 @@
-import { resolveRoomOptions, DEFAULT_VIDEO } from '../options';
+import { resolveRoomOptions } from '../options';
 import type {
   BackgroundMode,
   ConnectionQuality,
@@ -78,6 +78,11 @@ export class KapiRoom {
 
   get localMedia(): MediaStream | null {
     return this.localStream;
+  }
+
+  /** Resolved device-tier preset (capture / rungs / effect fps). */
+  get deviceAdaptation() {
+    return this.options.deviceAdaptationResolved;
   }
 
   get participants(): SignalPeer[] {
@@ -160,13 +165,11 @@ export class KapiRoom {
       // Camera off never keeps a live track (LED / black frames). Skip
       // getUserMedia for video until setCam(true), even with acquire:'join'.
       const videoConstraint: boolean | MediaTrackConstraints =
-        media.video === false
+        media.video === false || !this.camEnabled
           ? false
-          : !this.camEnabled
-            ? false
-            : media.video === undefined || media.video === true
-              ? DEFAULT_VIDEO
-              : media.video;
+          : typeof media.video === 'object'
+            ? media.video
+            : this.options.deviceAdaptationResolved.preset.video;
 
       this.rawCameraStream = await getLocalStream({
         audio: audioConstraint,
@@ -347,6 +350,12 @@ export class KapiRoom {
       videoCodec: this.options.videoCodec,
       maxBitrate: this.options.maxBitrate,
       adaptive: this.options.adaptive,
+      ...(this.options.adaptive && this.options.deviceAdaptationResolved.enabled
+        ? {
+            initialRung: this.options.deviceAdaptationResolved.preset.initialRung,
+            bestRung: this.options.deviceAdaptationResolved.preset.bestRung,
+          }
+        : {}),
     });
 
     if (this.localStream) await peer.addLocalTracks(this.localStream);
@@ -714,7 +723,11 @@ export class KapiRoom {
     const baseAudio =
       media.audio === undefined || media.audio === true ? true : media.audio;
     const baseVideo =
-      media.video === undefined || media.video === true ? DEFAULT_VIDEO : media.video;
+      media.video === false
+        ? false
+        : typeof media.video === 'object'
+          ? media.video
+          : this.options.deviceAdaptationResolved.preset.video;
 
     const preferred =
       kind === 'audio' ? this.preferredAudioDeviceId : this.preferredVideoDeviceId;
@@ -1052,6 +1065,7 @@ export class KapiRoom {
       this.background = new BackgroundProcessor({
         modelUrl: this.options.effects?.modelUrl,
         blurAmount: this.options.effects?.blurAmount,
+        targetFps: this.options.deviceAdaptationResolved.preset.effectFps,
       });
     }
     const processed = await this.background.start(this.rawCameraStream, mode);

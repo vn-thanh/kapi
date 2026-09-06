@@ -137,6 +137,16 @@ export interface KapiEffectsOptions {
   blurAmount?: number;
 }
 
+/** Proactive device / network capture presets (see `deviceAdaptation`). */
+export type DeviceTier = 'low' | 'medium' | 'high';
+
+export interface KapiDeviceAdaptationOptions {
+  /** Default true. Set false for the static 720p-ideal capture ceiling. */
+  enabled?: boolean;
+  /** Force a tier; `'auto'` (default) scores from Navigator hints. */
+  tier?: DeviceTier | 'auto';
+}
+
 export interface KapiRoomOptions {
   roomId: string;
   peerId: string;
@@ -164,6 +174,15 @@ export interface KapiRoomOptions {
    * stat/hint engine and only honor `maxBitrate`.
    */
   adaptive?: boolean;
+  /**
+   * Proactive capture / effect presets from device + network hints (default
+   * on). Picks 720p / 540p / 360p capture ceilings, starting adaptive rungs,
+   * effect fps, and a soft `maxBitrate` on weak links *before* the first
+   * frame. Complements `adaptive` (reactive encoder). Pass `false` for the
+   * static 720p-ideal ceiling; or `{ tier: 'low' | 'medium' | 'high' }` to
+   * force a preset.
+   */
+  deviceAdaptation?: boolean | KapiDeviceAdaptationOptions;
   /**
    * Per-peer connection quality for signal bars (default on). Pass `false` to
    * disable, or an object to tune interval / loss-RTT thresholds. Emits
@@ -244,8 +263,12 @@ export interface KapiUiLabels {
   noCam?: string;
   share?: string;
   stopShare?: string;
+  /** Tooltip when `getDisplayMedia` is unavailable (e.g. many mobile browsers). */
+  noShare?: string;
   /** Screen share that includes tab/system audio (toolbar tooltip suffix). */
   shareWithAudio?: string;
+  /** Toast when getUserMedia / getDisplayMedia is denied by the user or policy. */
+  permissionDenied?: string;
   react?: string;
   participants?: string;
   background?: string;

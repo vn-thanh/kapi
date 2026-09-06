@@ -20,7 +20,7 @@ npm run demo
 ngrok http 5179
 ```
 
-Send the `https://….ngrok-free.app` link. Both people join the **same room id**.
+Send the `https://….ngrok-free.app` link, or use **Copy invite link** on the lobby (includes the current room id). Both people join the **same room id**.
 
 ## What it uses
 

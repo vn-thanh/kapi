@@ -429,6 +429,97 @@ assert(eventsA.errors.length === 0, 'A stayed error-free');
   capped.close();
   console.log('ok: adaptive video rungs, receiver hints, share profile, bitrate cap');
 }
+
+// Device adaptation: tier scoring + capture ceilings + initial/best rungs.
+{
+  const {
+    scoreDeviceTier,
+    resolveDeviceAdaptation,
+    resolveRoomOptions,
+    KapiPeer,
+  } = await import('../dist/index.js');
+
+  assert(
+    scoreDeviceTier({
+      hardwareConcurrency: 8,
+      deviceMemoryGb: 8,
+      saveData: false,
+      effectiveType: '4g',
+      mobileLike: false,
+    }) === 'high',
+    'strong desktop → high',
+  );
+  assert(
+    scoreDeviceTier({
+      hardwareConcurrency: 2,
+      deviceMemoryGb: 2,
+      saveData: false,
+      effectiveType: '4g',
+      mobileLike: true,
+    }) === 'low',
+    'weak phone → low',
+  );
+  assert(
+    scoreDeviceTier({
+      hardwareConcurrency: 4,
+      deviceMemoryGb: 4,
+      saveData: true,
+      effectiveType: '4g',
+      mobileLike: false,
+    }) === 'low',
+    'saveData forces low',
+  );
+
+  const forced = resolveDeviceAdaptation({ tier: 'low' });
+  assert(forced.tier === 'low' && forced.preset.initialRung === 2, 'forced low preset');
+  const off = resolveDeviceAdaptation(false);
+  assert(off.enabled === false && off.tier === 'high', 'opt-out keeps high ceiling');
+
+  const resolved = resolveRoomOptions({
+    roomId: 'd',
+    peerId: 'd1',
+    signal: { send() {}, onMessage() { return () => {}; } },
+    deviceAdaptation: { tier: 'medium' },
+  });
+  const v = resolved.media.video;
+  assert(
+    typeof v === 'object' &&
+      v.width?.ideal === 960 &&
+      v.height?.ideal === 540,
+    `medium capture ceiling (got ${JSON.stringify(v)})`,
+  );
+  assert(resolved.effects.blurAmount === 10, 'medium blur default');
+
+  const noop = { onIce() {}, onTrack() {} };
+  const peer = new KapiPeer('remote', [], true, noop, {
+    adaptive: true,
+    initialRung: 2,
+    bestRung: 1,
+  });
+  await peer.addLocalTracks(
+    new FakeMediaStream([new FakeTrack('video', { width: 640, height: 360 })]),
+  );
+  await peer.syncVideoParams();
+  const enc0 =
+    peer.pc.getTransceivers().find((t) => t.kind === 'video').sender._params?.encodings?.[0] ??
+    {};
+  assert(
+    enc0.scaleResolutionDownBy === 4 && enc0.maxBitrate === 250000,
+    'initialRung 2 starts on the low encoding',
+  );
+  globalThis.__kapiQualityReason = 'none';
+  for (let i = 0; i < 8; i++) await peer.sampleVideoQuality();
+  const enc1 =
+    peer.pc.getTransceivers().find((t) => t.kind === 'video').sender._params?.encodings?.[0] ??
+    {};
+  assert(
+    enc1.scaleResolutionDownBy === 2,
+    'bestRung 1 blocks climbing back to full quality',
+  );
+  peer.close();
+  console.log('ok: device adaptation tiers, capture ceilings, rung floor');
+}
+
 // A throwing signal adapter (socket already closed, HTTP hiccup) must never
 // wedge teardown: sends route through a guard that surfaces an 'error' event,
 // and hangup() completes instead of aborting mid-cleanup.

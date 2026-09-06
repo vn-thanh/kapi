@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>kapi demo</title>
     <style>
       :root {
@@ -72,6 +72,21 @@
       .row {
         display: flex;
         gap: 10px;
+      }
+      .row button.secondary {
+        flex: 1;
+        border: 1px solid #2c3b52;
+        border-radius: 10px;
+        padding: 12px 16px;
+        background: #0e141d;
+        color: var(--fg);
+        font-weight: 600;
+        font-size: 0.95rem;
+        cursor: pointer;
+      }
+      .row button.secondary:hover {
+        border-color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 14%, #0e141d);
       }
       .media-toggles {
         display: flex;
@@ -166,6 +181,7 @@
       </div>
       <div class="row">
         <button class="primary" id="join" type="button">Join call</button>
+        <button class="secondary" id="copy-invite" type="button">Copy invite link</button>
       </div>
       <p class="hint">
         Signaling is HTTP long-poll through this demo server (works across machines / ngrok).
@@ -190,6 +206,7 @@
       const roomInput = document.getElementById('room');
       const nameInput = document.getElementById('name');
       const joinBtn = document.getElementById('join');
+      const copyInviteBtn = document.getElementById('copy-invite');
       const lobbyMic = document.getElementById('lobby-mic');
       const lobbyCam = document.getElementById('lobby-cam');
       const banner = document.getElementById('banner');
@@ -228,6 +245,31 @@
         clearTimeout(bannerTimer);
         bannerTimer = setTimeout(() => banner.classList.remove('show'), 6000);
       }
+
+      function inviteUrl() {
+        const url = new URL(location.href);
+        const roomId = (roomInput.value || 'kapi-demo').trim();
+        url.searchParams.set('room', roomId);
+        // Let the invitee pick their own display name.
+        url.searchParams.delete('name');
+        url.searchParams.delete('avatar');
+        url.searchParams.delete('autostart');
+        url.searchParams.delete('mic');
+        url.searchParams.delete('cam');
+        return url.toString();
+      }
+
+      async function copyInviteLink() {
+        const link = inviteUrl();
+        try {
+          await navigator.clipboard.writeText(link);
+          showBanner('Invite link copied — open it in another browser or device');
+        } catch {
+          // Fallback when clipboard is blocked (insecure origin, permissions).
+          window.prompt('Copy this invite link:', link);
+        }
+      }
+      copyInviteBtn.addEventListener('click', () => void copyInviteLink());
 
       /**
        * Demo SignalAdapter: POST to send, long-poll GET to receive.

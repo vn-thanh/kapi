@@ -1,5 +1,5 @@
 import { KapiRoom } from '../core/room';
-import { DEFAULT_LABELS, DEFAULT_THEME, DEFAULT_TOOLBAR, DEFAULT_VIDEO, resolveConnectionQuality } from '../options';
+import { DEFAULT_LABELS, DEFAULT_THEME, DEFAULT_TOOLBAR, resolveConnectionQuality } from '../options';
 import {
   DEFAULT_PREFERENCES_KEY,
   loadPreferences,
@@ -117,17 +117,14 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   let shortcutsOn = options.shortcuts ?? saved?.ui.shortcuts ?? true;
   const resolvedBg: BackgroundMode =
     options.effects?.background ?? saved?.effects.background ?? 'none';
-  const resolvedBlur = options.effects?.blurAmount ?? saved?.effects.blurAmount ?? 12;
+  const resolvedBlur = options.effects?.blurAmount ?? saved?.effects.blurAmount;
 
   const joinMedia = {
     ...options.media,
     audio: withPreferredDevice(options.media?.audio ?? true, saved?.devices.audioInputId),
-    video: withPreferredDevice(
-      options.media?.video === undefined || options.media?.video === true
-        ? { ...DEFAULT_VIDEO }
-        : options.media.video,
-      saved?.devices.videoInputId,
-    ),
+    // Leave bare true/undefined so resolveRoomOptions can apply the
+    // device-tier capture ceiling (deviceId-only prefs still merge there).
+    video: withPreferredDevice(options.media?.video, saved?.devices.videoInputId),
   };
   const joinOptions: KapiMountOptions = {
     ...options,
@@ -138,7 +135,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     effects: {
       ...options.effects,
       background: resolvedBg,
-      blurAmount: resolvedBlur,
+      ...(resolvedBlur !== undefined ? { blurAmount: resolvedBlur } : {}),
     },
   };
 
@@ -189,7 +186,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   pane.setAttribute('aria-label', labels.participants);
   let audioOutputId = saved?.devices.audioOutputId;
   let videoFit: 'contain' | 'cover' = resolvedFit;
-  let blurAmount = resolvedBlur;
+  let blurAmount = resolvedBlur ?? 12;
 
   const settings = createSettingsPanel({
     labels,
@@ -386,6 +383,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
    *  toggle that silently does nothing. Re-checked on `devicechange` so
    *  hot-plugging a camera/mic restores the button live. */
   const deviceMissing: Record<'mic' | 'cam', boolean> = { mic: false, cam: false };
+  /** Many mobile browsers lack getDisplayMedia — dim Share like a missing mic. */
+  const shareUnsupported =
+    typeof navigator === 'undefined' ||
+    typeof navigator.mediaDevices?.getDisplayMedia !== 'function';
 
   async function refreshDeviceAvailability() {
     if (disposed || !room) return;
@@ -419,10 +420,38 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     toastTimer = setTimeout(() => toast.classList.add('hidden'), 4500);
   }
 
+  function errorName(err: unknown): string {
+    if (err && typeof err === 'object' && 'name' in err) return String((err as { name: unknown }).name);
+    return '';
+  }
+
+  /** User dismissed the screen-share picker (Chrome: NotAllowedError; Firefox: AbortError). */
+  function isSharePickerDismissed(err: unknown): boolean {
+    const name = errorName(err);
+    if (name === 'AbortError') return true;
+    if (name !== 'NotAllowedError') return false;
+    const msg = err instanceof Error ? err.message.toLowerCase() : '';
+    // Permissions-Policy / iframe blocks should still toast; user cancel should not.
+    if (msg.includes('policy')) return false;
+    return true;
+  }
+
+  function friendlyErrorMessage(err: unknown): string {
+    const name = errorName(err);
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+      return labels.permissionDenied;
+    }
+    if (name === 'NotSupportedError') {
+      return labels.noShare;
+    }
+    if (err instanceof Error && err.message) return err.message;
+    return String(err);
+  }
+
   function reportError(err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
     console.error('[kapi]', error);
-    showToast(error.message || String(err));
+    showToast(friendlyErrorMessage(err));
     options.onError?.(error);
   }
 
@@ -1206,11 +1235,18 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
   function paintButton(b: HTMLButtonElement, id: ToolbarButton, text: string, mode: 'on' | 'off' | 'active' = 'on') {
     const unavailable =
+      (id === 'share' && shareUnsupported) ||
       (id === 'background' && deviceMissing.cam) ||
       ((id === 'mic' || id === 'cam') && deviceMissing[id]);
     // An unavailable device replaces the toggle label ("Mute"/"Unmute") — a
     // mute tooltip on a button that cannot capture anything would be a lie.
-    const label = unavailable ? (id === 'mic' ? labels.noMic : labels.noCam) : text;
+    const label = unavailable
+      ? id === 'mic'
+        ? labels.noMic
+        : id === 'share'
+          ? labels.noShare
+          : labels.noCam
+      : text;
     b.title = label;
     b.setAttribute('aria-label', label);
     b.setAttribute('aria-pressed', mode === 'off' ? 'false' : 'true');
@@ -1409,11 +1445,20 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
   unsubs.push(() => document.removeEventListener('pointerdown', onDocPointerForOverflow));
 
   const onKeyForOverflow = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      closeOverflow();
-      closeReactions();
-      bgPanel.classList.add('hidden');
+    if (e.key !== 'Escape') return;
+    if (settings.isOpen()) {
+      settings.close();
+      e.preventDefault();
+      return;
     }
+    if (!pane.classList.contains('hidden')) {
+      showPanel('participants', false);
+      e.preventDefault();
+      return;
+    }
+    closeOverflow();
+    closeReactions();
+    bgPanel.classList.add('hidden');
   };
   document.addEventListener('keydown', onKeyForOverflow);
   unsubs.push(() => document.removeEventListener('keydown', onKeyForOverflow));
@@ -1488,9 +1533,22 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     },
     share: () => {
       if (!room) return;
+      if (shareUnsupported) {
+        showToast(labels.noShare);
+        return;
+      }
+      const enabling = !room.sharing;
       room
-        .shareScreen(!room.sharing)
-        .catch(reportError)
+        .shareScreen(enabling)
+        .catch((err) => {
+          // Dismissing the picker is normal — don't toast "Permission denied".
+          if (enabling && isSharePickerDismissed(err)) return;
+          if (enabling && errorName(err) === 'NotSupportedError') {
+            showToast(labels.noShare);
+            return;
+          }
+          reportError(err);
+        })
         .finally(updateToolbarLabels);
     },
     react: () => toggleReactions(),
@@ -1566,6 +1624,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
         return;
       }
       room = r;
+      blurAmount = r.options.effects?.blurAmount ?? blurAmount;
       options.onReady?.(r);
       updateToolbarLabels();
       void refreshDeviceAvailability();

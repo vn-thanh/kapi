@@ -4,6 +4,8 @@ import type { BackgroundMode } from '../types';
 export type BackgroundProcessorOptions = {
   modelUrl?: string;
   blurAmount?: number;
+  /** Inference + captureStream fps (device-tier; default 30). */
+  targetFps?: number;
 };
 
 type ImageSegmenter = import('@mediapipe/tasks-vision').ImageSegmenter;
@@ -37,6 +39,9 @@ export class BackgroundProcessor {
   private blurAmount: number;
   private readonly modelUrl: string;
   private lastTs = -1;
+  /** Min ms between MediaPipe frames (device-tier fps). */
+  private readonly minFrameMs: number;
+  private readonly targetFps: number;
   /** Bumped by stop() so a model load it interrupted can be detected. */
   private generation = 0;
 
@@ -59,6 +64,12 @@ export class BackgroundProcessor {
   constructor(opts: BackgroundProcessorOptions = {}) {
     this.modelUrl = opts.modelUrl ?? DEFAULT_MODEL_URL;
     this.blurAmount = opts.blurAmount ?? 12;
+    const fps =
+      typeof opts.targetFps === 'number' && opts.targetFps > 0
+        ? Math.min(30, Math.max(5, Math.round(opts.targetFps)))
+        : 30;
+    this.targetFps = fps;
+    this.minFrameMs = 1000 / fps;
   }
 
   /** Live-update blur strength (main thread + worker). */
@@ -260,7 +271,7 @@ export class BackgroundProcessor {
     this.pendingFrame = false;
     this.startLoop();
 
-    const fps = 30;
+    const fps = this.targetFps;
     const out = this.canvas.captureStream(fps);
     for (const t of source.getAudioTracks()) out.addTrack(t);
     this.outStream = out;
@@ -334,11 +345,14 @@ export class BackgroundProcessor {
     const { video, canvas } = this;
     if (!this.running || !video || !canvas || !this.ctx) return;
     const now = performance.now();
+    if (now - this.lastTs < this.minFrameMs) {
+      this.raf = requestAnimationFrame(this.loop);
+      return;
+    }
     if (
       video.readyState >= 2 &&
       video.videoWidth > 0 &&
-      video.videoHeight > 0 &&
-      now !== this.lastTs
+      video.videoHeight > 0
     ) {
       this.lastTs = now;
       if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
