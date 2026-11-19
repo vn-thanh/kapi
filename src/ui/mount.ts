@@ -1576,7 +1576,7 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
 
   // ---------- lifecycle ----------
 
-  const dispose = () => {
+  const dispose = (silent = false) => {
     if (disposed) return;
     disposed = true;
     clearTimeout(toastTimer);
@@ -1606,7 +1606,10 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
     root.remove();
     // Single dispatch point: the toolbar button and an external room.hangup()
     // (via the 'hangup' listener below) both funnel through dispose().
-    options.onHangup?.();
+    // `silent` is only used when join itself failed — there was no call to end,
+    // so onError reports it and hosts that use onHangup to return to a lobby
+    // do not bounce on a permission denial.
+    if (!silent) options.onHangup?.();
   };
 
   const actions: Record<ToolbarButton, () => void> = {
@@ -1808,8 +1811,9 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
       reportError(err);
       // Join failed (e.g. permission denied) — everything above was allocated
       // synchronously, so without disposing, each retry leaks the frame
-      // watchdog, document listeners, and the ResizeObserver.
-      dispose();
+      // watchdog, document listeners, and the ResizeObserver. Silent: no call
+      // ever started, so this is not a hangup.
+      dispose(true);
     });
 
   return {

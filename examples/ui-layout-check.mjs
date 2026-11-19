@@ -28,6 +28,9 @@ import { createBroadcastSignalAdapter } from '/dist/index.js';
 window.handles = [
   mount(document.getElementById('a'), {
     roomId: 'layout-check', peerId: 'p1', displayName: 'Ada',
+    // KapiRoom joins muted by default; the mute-chip step below needs an
+    // unmuted mic to turn OFF, so p1 opts in explicitly.
+    media: { startMic: true },
     signal: createBroadcastSignalAdapter('layout-check', 'p1'),
     // Explicit shortcuts — not in DEFAULT_TOOLBAR (Settings owns these).
     toolbar: ['mic','cam','share','react','participants','layout','background','settings','hangup'],
@@ -293,8 +296,15 @@ async function main() {
     await pageObj.waitForFunction(
       () => {
         const r = document.querySelectorAll('.kapi-root')[0];
+        // The ⋯ button is removed from the bar (not merely `hidden`) when
+        // everything fits — `.kapi-toolbar button` sets display:inline-flex,
+        // which beats the UA `[hidden]` rule. Same tolerance as the wide
+        // assertion above.
         const more = r.querySelector('button[data-id="more"]');
-        return more && more.hidden && r.querySelector('.kapi-toolbar button[data-id="layout"]');
+        return (
+          (!more || more.hidden) &&
+          !!r.querySelector('.kapi-toolbar button[data-id="layout"]')
+        );
       },
       undefined,
       { timeout: 5000 },
@@ -354,7 +364,24 @@ async function main() {
     });
     assert.equal(bg.active, false, 'picking none clears the active paint');
 
-    console.log('ok: ui layouts, cycling, pinning, setLayout, remote mute, toolbar overflow, background picker');
+    // 8. videoFit 'cover' crops camera tiles but must never crop a screen
+    //    share (the shared screen is the one thing that has to stay readable).
+    const fit = await pageObj.evaluate(() => {
+      const r = document.querySelectorAll('.kapi-root')[0];
+      const tile = r.querySelector('.kapi-tile');
+      const video = tile.querySelector('video');
+      r.classList.add('kapi-fit-cover');
+      const camera = getComputedStyle(video).objectFit;
+      tile.classList.add('screenshare');
+      const share = getComputedStyle(video).objectFit;
+      tile.classList.remove('screenshare');
+      r.classList.remove('kapi-fit-cover');
+      return { camera, share };
+    });
+    assert.equal(fit.camera, 'cover', 'videoFit cover fills camera tiles');
+    assert.equal(fit.share, 'contain', 'videoFit cover must not crop a screen share');
+
+    console.log('ok: ui layouts, cycling, pinning, setLayout, remote mute, toolbar overflow, background picker, videoFit');
   } finally {
     await browser?.close().catch(() => undefined);
     server.kill();

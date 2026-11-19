@@ -57,8 +57,10 @@ export function injectStyles() {
   opacity: 1;
   transition: opacity 0.2s ease;
 }
-/* Opt back into edge-to-edge cropping (camera tiles only). */
-.kapi-root.kapi-fit-cover .kapi-tile video {
+/* Opt back into edge-to-edge cropping (camera tiles only). Screen shares keep
+   the .kapi-tile.screenshare rule below — that selector is less specific, so
+   this one must exclude them explicitly or shared text gets cropped. */
+.kapi-root.kapi-fit-cover .kapi-tile:not(.screenshare) video {
   object-fit: cover;
 }
 .kapi-tile:focus-visible {
@@ -648,6 +650,12 @@ export function injectStyles() {
   min-height: 0;
 }
 .kapi-settings-pane[hidden] {
+  display: none;
+}
+/* Author display:block beats the UA [hidden] rule — the same reset the pane
+   above needs, for fields toggled with hidden = true (blur strength). */
+.kapi-settings-field[hidden],
+.kapi-device[hidden] {
   display: none;
 }
 .kapi-settings-field {

@@ -159,7 +159,9 @@ may renegotiate peers.
     key?: string
     onChange?: (prefs: KapiUserPreferences) => void
   }
-  onHangup?: () => void
+  onHangup?: () => void    // the call ended (leave button, external dispose,
+                           // remote hangup). NOT called when join itself
+                           // failed — that reports through onError only.
   onReady?: (room: KapiRoom) => void
   onError?: (error: Error) => void
 }
