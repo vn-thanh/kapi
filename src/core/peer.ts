@@ -180,7 +180,15 @@ export class KapiPeer {
       return false;
     }
     if (!track) return false;
-    this.shareAudioSender = this.pc.addTrack(track);
+    const sender = this.pc.addTrack(track);
+    // addTrack reuses a compatible trackless transceiver of the same kind —
+    // for a peer that joined without a mic (acquire: 'on-enable', or a failed
+    // mic) that is the EMPTY mic m-line. Two streams on one sender means
+    // unmuting replaces the share audio, and stopping the share then detaches
+    // the mic entirely (UI still says unmuted, remote hears nothing). Drop the
+    // mic's claim so it takes its own m-line on the next unmute.
+    if (this.audioTransceiver?.sender === sender) this.audioTransceiver = null;
+    this.shareAudioSender = sender;
     return true;
   }
 
@@ -189,6 +197,10 @@ export class KapiPeer {
     if (!t) {
       if (!track) return false;
       const sender = this.pc.addTrack(track);
+      // Mirror of setShareAudioTrack: addTrack can hand back the screen-share
+      // audio m-line (its sender is empty between shares). The mic must never
+      // land on it — stopping the next share would detach the mic.
+      if (kind === 'audio' && sender === this.shareAudioSender) this.shareAudioSender = null;
       t = this.pc.getTransceivers().find((x) => x.sender === sender) ?? null;
       if (!t) return true; // very old stacks without transceiver access — renegotiate to be safe
       this.setTransceiverFor(kind, t);
@@ -418,14 +430,18 @@ export class KapiPeer {
     // Skipping the answer after glare left the impolite peer without a remote
     // description (media never connected). That regressed vs BroadcastChannel
     // demos where only one side offered.
-    this.ignoreOffer = false;
     if (this.pc.signalingState === 'stable') {
       // Already settled (e.g. duplicate answer) — ignore.
       return;
     }
     await this.pc.setRemoteDescription({ type: 'answer', sdp });
     this.indexTransceivers();
+    // Drain BEFORE clearing ignoreOffer: candidates buffered from the offer we
+    // ignored belong to the superseded ufrag, so the browser rejects them —
+    // clearing the flag first turned every glare into a thrown
+    // OperationError (spurious `error` event, rest of the queue dropped).
     await this.flushIce();
+    this.ignoreOffer = false;
   }
 
   async handleIce(candidate: RTCIceCandidateInit) {

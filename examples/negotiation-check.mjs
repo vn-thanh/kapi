@@ -600,6 +600,33 @@ assert(eventsA.errors.length === 0, 'A stayed error-free');
   );
   sharePeer.close();
 
+  // Regression: a peer that joined WITHOUT a mic (`acquire: 'on-enable'`, a
+  // failed mic) still holds an empty audio m-line. addTrack reuses it for the
+  // share audio, which put both streams on ONE sender — unmuting replaced the
+  // share audio, and stopping the share then detached the mic for good (UI
+  // says unmuted, remote hears nothing, no way back).
+  {
+    const aliasPeer = new KapiPeer('share-alias', [], true, { onIce() {}, onTrack() {} });
+    await aliasPeer.createAndSetOffer(); // mic-less offerer → empty audio m-line
+    const shareAudio = new FakeTrack('audio');
+    const mic = new FakeTrack('audio');
+    assert(
+      (await aliasPeer.setShareAudioTrack(shareAudio)) === true,
+      'share audio on a mic-less peer needs renegotiation',
+    );
+    await aliasPeer.replaceTrack('audio', mic);
+    assert(
+      aliasPeer.pc.getSenders().some((s) => s.track === shareAudio),
+      'unmuting must not replace the screen-share audio',
+    );
+    await aliasPeer.setShareAudioTrack(null);
+    assert(
+      aliasPeer.pc.getSenders().some((s) => s.track === mic),
+      'stopping the share must not detach the mic',
+    );
+    aliasPeer.close();
+  }
+
   // Live identity broadcast.
   const meta = [];
   room.on('peer-meta', (p) => meta.push(p));
