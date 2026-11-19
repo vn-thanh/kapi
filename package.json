@@ -62,7 +62,7 @@
     "prepublishOnly": "npm run check",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check": "npm run typecheck && npm run build",
-    "self-check": "npm run build && node examples/self-check.mjs && node examples/negotiation-check.mjs && node examples/ui-layout-check.mjs",
+    "self-check": "npm run build && node examples/self-check.mjs && node examples/negotiation-check.mjs && node examples/sfu-check.mjs && node examples/ui-layout-check.mjs",
     "release": "npm run self-check && npm publish",
     "demo": "npm run build && node demo/serve.mjs",
     "demo:serve": "node demo/serve.mjs"

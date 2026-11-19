@@ -1759,6 +1759,16 @@ export function mount(parent: HTMLElement, options: KapiMountOptions): KapiMount
           renderParticipants();
         }),
         r.on('track', ({ peerId, track }) => attachRemoteTrack(peerId, track)),
+        // Mesh → SFU: the peer's media moved to a new link. A fresh managed
+        // stream makes the tile and <audio> rebind instead of keeping the
+        // closed P2P tracks around.
+        r.on('tracks-reset', ({ peerId }) => {
+          remoteStreams.delete(peerId);
+        }),
+        r.on('room-full', () => {
+          showToast(labels.roomFull);
+          setTimeout(() => dispose(), 2500);
+        }),
         r.on('reaction', ({ emoji }) => spawnReactionFloat(emoji)),
         r.on('media-state', ({ peerId, sharing, mic, shareAudio }) => {
           applyMediaState(peerId, { sharing, mic, shareAudio });

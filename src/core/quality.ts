@@ -45,8 +45,14 @@ export function scoreConnectionQuality(
   return rank[a] >= rank[b] ? a : b;
 }
 
-/** Read loss / RTT from a peer connection's getStats report. */
-export async function readQualitySample(pc: RTCPeerConnection): Promise<QualitySample> {
+/**
+ * Read loss / RTT from a peer connection's getStats report. `mids` limits
+ * inbound loss to those transceivers (one remote peer on a shared SFU link).
+ */
+export async function readQualitySample(
+  pc: RTCPeerConnection,
+  mids?: ReadonlySet<string>,
+): Promise<QualitySample> {
   const connectionState = pc.connectionState;
   let packetsReceived = 0;
   let packetsLost = 0;
@@ -62,8 +68,9 @@ export async function readQualitySample(pc: RTCPeerConnection): Promise<QualityS
         currentRoundTripTime?: number;
         nominated?: boolean;
         state?: string;
+        mid?: string;
       };
-      if (rep.type === 'inbound-rtp') {
+      if (rep.type === 'inbound-rtp' && (!mids || (rep.mid !== undefined && mids.has(rep.mid)))) {
         if (typeof rep.packetsReceived === 'number') packetsReceived += rep.packetsReceived;
         if (typeof rep.packetsLost === 'number') packetsLost += Math.max(0, rep.packetsLost);
       }

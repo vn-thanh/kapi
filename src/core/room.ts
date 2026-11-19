@@ -3,8 +3,12 @@ import type {
   BackgroundMode,
   ConnectionQuality,
   KapiRoomOptions,
+  KapiTopology,
   RoomEvent,
   RoomEventMap,
+  SfuPublication,
+  SfuSource,
+  SfuTrackInfo,
   SignalMessage,
   SignalPeer,
 } from '../types';
@@ -12,8 +16,27 @@ import { BackgroundProcessor } from '../effects/background';
 import { deviceIdFromConstraint } from '../preferences/storage';
 import { getDisplayStream, getLocalStream } from './media';
 import { KapiPeer } from './peer';
+import { ridForSize, SfuTransport } from './sfu';
 
 type Handler<E extends RoomEvent> = (payload: RoomEventMap[E]) => void;
+
+/** Max wait for a peer's SFU media before its P2P link is dropped anyway. */
+const SFU_SWAP_TIMEOUT_MS = 5000;
+const SFU_SOURCES: readonly SfuSource[] = ['audio', 'video', 'share-audio'];
+
+/** Relays are untrusted input: accept only well-formed publications. */
+function asPublication(value: unknown): SfuPublication | null {
+  const v = value as { sessionId?: unknown; tracks?: unknown } | null;
+  if (!v || typeof v.sessionId !== 'string' || !v.sessionId || !Array.isArray(v.tracks)) return null;
+  const tracks = (v.tracks as Partial<SfuTrackInfo>[]).filter(
+    (t): t is SfuTrackInfo =>
+      !!t &&
+      typeof t.trackName === 'string' &&
+      (t.kind === 'audio' || t.kind === 'video') &&
+      SFU_SOURCES.includes(t.source as SfuSource),
+  );
+  return { sessionId: v.sessionId, tracks };
+}
 
 export class KapiRoom {
   readonly options: ReturnType<typeof resolveRoomOptions>;
@@ -56,6 +79,25 @@ export class KapiRoom {
   /** Transient drops (Wi-Fi roam, slow TURN) get this many ICE-restart tries
    *  before the link is torn down. */
   private static readonly MAX_ICE_RESTARTS = 3;
+  /** Relay-chosen topology. `sfu` is one-way: the room never returns to mesh. */
+  private topology: KapiTopology = 'mesh';
+  private sfu: SfuTransport | null = null;
+  private sfuReady: Promise<void> | null = null;
+  /** Remote peers' SFU publications (from `sfu-tracks` / `peers`). */
+  private readonly sfuPublications = new Map<string, SfuPublication>();
+  /** Peers present over the SFU (no P2P link). */
+  private readonly sfuPeers = new Set<string>();
+  /** Peers whose delivered tracks already come from the SFU. */
+  private readonly sfuDelivered = new Set<string>();
+  /** SFU tracks held until the P2P link they replace can be dropped. */
+  private readonly pendingSfuTracks = new Map<
+    string,
+    { tracks: MediaStreamTrack[]; timer: ReturnType<typeof setTimeout> }
+  >();
+  /** Last outbound video handed to peers (camera, effect canvas or screen). */
+  private outboundVideo: MediaStreamTrack | null | undefined = undefined;
+  private relayReported = false;
+  private aloneTimer: ReturnType<typeof setTimeout> | null = null;
 
   private constructor(opts: KapiRoomOptions) {
     this.options = resolveRoomOptions(opts);
@@ -249,7 +291,14 @@ export class KapiRoom {
       peerId: this.options.peerId,
       displayName: this.options.displayName,
       avatarUrl: this.options.avatarUrl,
+      ...(this.options.sfu ? { caps: { sfu: true } } : {}),
     });
+    this.syncAloneTimer();
+  }
+
+  /** Current topology chosen by the relay (`mesh` until it says otherwise). */
+  get mode(): KapiTopology {
+    return this.topology;
   }
 
   private isPoliteToward(remoteId: string): boolean {
@@ -286,6 +335,11 @@ export class KapiRoom {
     meta?: Pick<SignalPeer, 'displayName' | 'avatarUrl'>,
   ): Promise<KapiPeer | null> {
     if (remoteId === this.options.peerId || this.closed) return null;
+    // SFU room: new peers are presence only — media comes over the SFU link.
+    if (this.topology === 'sfu' && !this.peers.has(remoteId)) {
+      this.ensureSfuPeer(remoteId, meta);
+      return null;
+    }
     let peer = this.peers.get(remoteId);
     if (peer) {
       if (meta && (meta.displayName !== undefined || meta.avatarUrl !== undefined)) {
@@ -318,6 +372,7 @@ export class KapiRoom {
         } else if (state === 'connected') {
           // Fresh connected — sample ASAP instead of waiting for the tick.
           void this.samplePeerConnectionQuality(remoteId);
+          if (peer) void this.reportPath(peer);
         }
         if (state === 'connected') {
           this.restartAttempts.delete(remoteId);
@@ -392,20 +447,202 @@ export class KapiRoom {
     // Late joiners never saw earlier broadcasts — send the current mic/cam/
     // share snapshot targeted so relays route it to them only.
     this.broadcastMediaState(remoteId);
+    this.syncAloneTimer();
     return peer;
+  }
+
+  /** A peer reached over the SFU: roster + UI tile now, media when pulled. */
+  private ensureSfuPeer(
+    remoteId: string,
+    meta?: Pick<SignalPeer, 'displayName' | 'avatarUrl'>,
+  ) {
+    if (remoteId === this.options.peerId || this.closed) return;
+    if (this.peers.has(remoteId) || this.sfuPeers.has(remoteId)) {
+      if (meta && (meta.displayName !== undefined || meta.avatarUrl !== undefined)) {
+        this.mergePeerMeta(remoteId, meta);
+      }
+      return;
+    }
+    this.sfuPeers.add(remoteId);
+    const stored = this.mergePeerMeta(remoteId, meta);
+    this.emit('peer-joined', {
+      peerId: remoteId,
+      displayName: stored.displayName,
+      avatarUrl: stored.avatarUrl,
+    });
+    this.broadcastMediaState(remoteId);
+    this.syncAloneTimer();
   }
 
   private removePeer(remoteId: string) {
     const peer = this.peers.get(remoteId);
-    if (!peer) return;
+    if (!peer && !this.sfuPeers.has(remoteId)) return;
     this.clearRestartTimer(remoteId);
     this.restartAttempts.delete(remoteId);
     this.pendingNegotiation.delete(remoteId);
     this.lastConnectionQuality.delete(remoteId);
-    peer.close();
-    this.peers.delete(remoteId);
+    if (peer) {
+      peer.close();
+      this.peers.delete(remoteId);
+    }
+    this.sfuPeers.delete(remoteId);
+    const pending = this.pendingSfuTracks.get(remoteId);
+    if (pending) clearTimeout(pending.timer);
+    this.pendingSfuTracks.delete(remoteId);
+    this.sfuPublications.delete(remoteId);
+    this.sfuDelivered.delete(remoteId);
+    // Stop paying egress for a peer nobody here renders anymore.
+    void this.sfu?.dropPeer(remoteId);
     this.peerMeta.delete(remoteId);
     this.emit('peer-left', { peerId: remoteId });
+    this.syncAloneTimer();
+  }
+
+  /** Mesh → SFU swap: close the P2P link without announcing a departure. */
+  private dropP2P(remoteId: string) {
+    const peer = this.peers.get(remoteId);
+    if (!peer) return;
+    this.sfuPeers.add(remoteId);
+    this.clearRestartTimer(remoteId);
+    this.restartAttempts.delete(remoteId);
+    this.pendingNegotiation.delete(remoteId);
+    this.peers.delete(remoteId);
+    peer.close();
+  }
+
+  /** Telemetry for the relay: our mesh link runs through TURN (reported once). */
+  private async reportPath(peer: KapiPeer) {
+    if (this.relayReported) return;
+    const relayed = await peer.isRelayed();
+    if (!relayed || this.closed || this.relayReported) return;
+    this.relayReported = true;
+    this.signalSend({ type: 'path', relay: true, from: this.options.peerId });
+  }
+
+  private syncAloneTimer() {
+    const ms = this.options.aloneTimeoutMs;
+    if (!ms || this.closed) return;
+    const alone = this.peers.size === 0 && this.sfuPeers.size === 0;
+    if (!alone) {
+      if (this.aloneTimer !== null) clearTimeout(this.aloneTimer);
+      this.aloneTimer = null;
+      return;
+    }
+    if (this.aloneTimer !== null) return;
+    this.aloneTimer = setTimeout(() => {
+      this.aloneTimer = null;
+      if (this.closed || this.peers.size > 0 || this.sfuPeers.size > 0) return;
+      this.emit('alone-timeout', undefined);
+      void this.hangup();
+    }, ms);
+  }
+
+  /**
+   * Follow the relay into the SFU (idempotent, one-way). Publishes the live
+   * outbound tracks and pulls every known peer; P2P links stay up until each
+   * peer's SFU media arrives (see onSfuTrack).
+   */
+  private enterSfu(): Promise<void> {
+    if (this.sfuReady) return this.sfuReady;
+    const adapter = this.options.sfu;
+    if (!adapter) {
+      this.emit('error', { error: new Error('The room moved to an SFU but no `sfu` adapter was given') });
+      return Promise.resolve();
+    }
+    this.topology = 'sfu';
+    this.emit('mode', { mode: 'sfu' });
+    const sfu = new SfuTransport(adapter, this.options.iceServers, {
+      onTrack: (peerId, track) => this.onSfuTrack(peerId, track),
+      onError: (error) => this.emit('error', { error }),
+    });
+    this.sfu = sfu;
+    const started = sfu.start(this.outboundSfuTracks(), !!this.screenStream);
+    // Pulls queue behind the publish on the transport's own chain.
+    for (const [peerId, pub] of this.sfuPublications) void sfu.pull(peerId, pub);
+    this.sfuReady = started.then((tracks) => {
+      if (this.closed || !tracks) return;
+      this.signalSend({
+        type: 'sfu-tracks',
+        peerId: this.options.peerId,
+        sessionId: sfu.sessionId,
+        tracks,
+        from: this.options.peerId,
+      });
+    });
+    return this.sfuReady;
+  }
+
+  private outboundSfuTracks(): Record<SfuSource, MediaStreamTrack | null> {
+    const shareAudio = this.screenShareAudioTrack();
+    const mic =
+      this.rawCameraStream
+        ?.getAudioTracks()
+        .find((t) => t.readyState === 'live' && t !== shareAudio) ?? null;
+    const video =
+      this.outboundVideo !== undefined
+        ? this.outboundVideo
+        : (this.screenStream?.getVideoTracks()[0] ??
+          (this.camEnabled ? (this.localStream?.getVideoTracks()[0] ?? null) : null));
+    return { audio: mic, video, 'share-audio': shareAudio };
+  }
+
+  private rememberSfuPublication(peerId: string, pub: SfuPublication) {
+    const prev = this.sfuPublications.get(peerId);
+    if (prev && prev.sessionId !== pub.sessionId) {
+      // Re-published from a new session: drop the old subscriptions.
+      void this.sfu?.dropPeer(peerId);
+      this.sfuDelivered.delete(peerId);
+    }
+    this.sfuPublications.set(peerId, pub);
+    if (this.sfu) void this.sfu.pull(peerId, pub);
+  }
+
+  private onSfuTrack(peerId: string, track: MediaStreamTrack) {
+    if (this.closed) return;
+    if (!this.peers.has(peerId)) {
+      this.deliverSfuTrack(peerId, track);
+      return;
+    }
+    // Still on P2P: keep it until the SFU path carries media, then swap.
+    let pending = this.pendingSfuTracks.get(peerId);
+    if (!pending) {
+      pending = {
+        tracks: [],
+        timer: setTimeout(() => this.swapToSfu(peerId), SFU_SWAP_TIMEOUT_MS),
+      };
+      this.pendingSfuTracks.set(peerId, pending);
+    }
+    pending.tracks.push(track);
+    if (!track.muted) this.swapToSfu(peerId);
+    else track.addEventListener('unmute', () => this.swapToSfu(peerId), { once: true });
+  }
+
+  private swapToSfu(peerId: string) {
+    const pending = this.pendingSfuTracks.get(peerId);
+    if (!pending || this.closed) return;
+    clearTimeout(pending.timer);
+    this.pendingSfuTracks.delete(peerId);
+    this.dropP2P(peerId);
+    for (const t of pending.tracks) this.deliverSfuTrack(peerId, t);
+  }
+
+  private deliverSfuTrack(peerId: string, track: MediaStreamTrack) {
+    if (!this.sfuDelivered.has(peerId)) {
+      this.sfuDelivered.add(peerId);
+      this.emit('tracks-reset', { peerId });
+    }
+    this.emit('track', { peerId, track, streams: [] });
+  }
+
+  private async sampleSfuConnectionQuality(peerId: string) {
+    const sfu = this.sfu;
+    if (!sfu || !sfu.hasPeer(peerId) || !this.options.connectionQualityResolved.enabled) return;
+    const quality = await sfu.sampleConnectionQuality(
+      peerId,
+      this.options.connectionQualityResolved.thresholds,
+    );
+    if (this.closed || !this.sfuPeers.has(peerId)) return;
+    this.emitConnectionQuality(peerId, quality);
   }
 
   private emitConnectionQuality(peerId: string, quality: ConnectionQuality) {
@@ -428,9 +665,10 @@ export class KapiRoom {
 
   private async sampleAllConnectionQuality() {
     if (this.closed) return;
-    await Promise.all(
-      [...this.peers.keys()].map((id) => this.samplePeerConnectionQuality(id)),
-    );
+    await Promise.all([
+      ...[...this.peers.keys()].map((id) => this.samplePeerConnectionQuality(id)),
+      ...[...this.sfuPeers].map((id) => this.sampleSfuConnectionQuality(id)),
+    ]);
   }
 
   private clearRestartTimer(remoteId: string) {
@@ -498,7 +736,9 @@ export class KapiRoom {
           // the stale link first so the fresh offer lands on a clean
           // RTCPeerConnection instead of a zombie one (which could also be
           // mid-ICE-restart with a pending local offer → glare / ignored offer).
-          if (this.peers.has(msg.peerId)) this.removePeer(msg.peerId);
+          if (this.peers.has(msg.peerId) || this.sfuPeers.has(msg.peerId)) {
+            this.removePeer(msg.peerId);
+          }
           // Presence only — the joiner receives `peers` and offers to us (avoids
           // glare when 3+ peers join a mesh). Host relay must send `peers`.
           await this.ensurePeer(msg.peerId, {
@@ -511,16 +751,38 @@ export class KapiRoom {
           break;
         case 'peers':
           if (!Array.isArray(msg.peers)) return;
+          // Joining a room the relay already moved to the SFU: no P2P at all.
+          if (msg.mode === 'sfu') void this.enterSfu();
           for (const p of msg.peers) {
             if (!p || typeof p.peerId !== 'string') continue;
             if (p.peerId === this.options.peerId) continue;
-            await this.ensurePeer(p.peerId, {
-              displayName: p.displayName,
-              avatarUrl: p.avatarUrl,
-            });
+            const meta = { displayName: p.displayName, avatarUrl: p.avatarUrl };
+            if (this.topology === 'sfu') {
+              this.ensureSfuPeer(p.peerId, meta);
+              const pub = asPublication(p.sfu);
+              if (pub) this.rememberSfuPublication(p.peerId, pub);
+              continue;
+            }
+            await this.ensurePeer(p.peerId, meta);
             await this.negotiate(p.peerId);
           }
           break;
+        case 'mode':
+          if (msg.mode === 'sfu') void this.enterSfu();
+          break;
+        case 'full':
+          this.emit('room-full', {
+            reason: typeof msg.reason === 'string' ? msg.reason : undefined,
+          });
+          break;
+        case 'sfu-tracks': {
+          if (typeof msg.peerId !== 'string' || msg.peerId === this.options.peerId) return;
+          const pub = asPublication(msg);
+          if (!pub) return;
+          if (this.topology === 'sfu') this.ensureSfuPeer(msg.peerId);
+          this.rememberSfuPublication(msg.peerId, pub);
+          break;
+        }
         case 'offer': {
           const from = msg.from;
           if (!from || msg.to !== this.options.peerId) return;
@@ -856,6 +1118,7 @@ export class KapiRoom {
       for (const [id, peer] of this.peers) {
         if (await peer.replaceTrack('audio', track)) await this.negotiate(id);
       }
+      await this.sfu?.setTrack('audio', track);
       this.emit('local-stream', { stream: this.localStream });
       return;
     }
@@ -908,6 +1171,7 @@ export class KapiRoom {
     for (const [id, peer] of this.peers) {
       if (await peer.setShareAudioTrack(track)) await this.negotiate(id);
     }
+    await this.sfu?.setTrack('share-audio', track);
   }
 
   async shareScreen(enabled: boolean) {
@@ -1035,6 +1299,11 @@ export class KapiRoom {
    */
   sendVideoHint(toPeerId: string, width: number, height: number) {
     if (this.closed || !this.options.adaptive) return;
+    // Over the SFU the hint picks a simulcast layer instead of a sender rung.
+    if (this.sfuPeers.has(toPeerId)) {
+      void this.sfu?.setPreferredRid(toPeerId, ridForSize(width, height));
+      return;
+    }
     this.signalSend({
       type: 'video-hint',
       to: toPeerId,
@@ -1062,6 +1331,9 @@ export class KapiRoom {
 
   private async replaceVideoTrack(track: MediaStreamTrack | null) {
     const sharing = !!this.screenStream;
+    this.outboundVideo = track;
+    await this.sfu?.setSharing(sharing);
+    await this.sfu?.setTrack('video', track);
     for (const [id, peer] of this.peers) {
       // Share swaps the quality profile first (full res / low fps), then the
       // track; capture size can also change on a device switch → resync.
@@ -1199,6 +1471,7 @@ export class KapiRoom {
       for (const [id, peer] of this.peers) {
         if (await peer.replaceTrack('audio', track)) await this.negotiate(id);
       }
+      await this.sfu?.setTrack('audio', track);
       // Swap the mic track in every stream that exposes it — raw camera plus
       // the current localStream, which may be the background-processed canvas
       // stream or the screen-share preview (both carry audio tracks of their
@@ -1278,7 +1551,12 @@ export class KapiRoom {
     this.restartTimers.clear();
     this.pendingNegotiation.clear();
     this.restartAttempts.clear();
-    for (const id of [...this.peers.keys()]) this.removePeer(id);
+    if (this.aloneTimer !== null) clearTimeout(this.aloneTimer);
+    this.aloneTimer = null;
+    // Close the SFU link first: per-peer dropPeer calls are moot after this.
+    this.sfu?.close();
+    this.sfu = null;
+    for (const id of new Set([...this.peers.keys(), ...this.sfuPeers])) this.removePeer(id);
     this.background?.stop();
     this.background = null;
     // Detach onended before stopping: otherwise stopping the screen track

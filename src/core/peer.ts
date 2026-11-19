@@ -372,6 +372,38 @@ export class KapiPeer {
     await this.syncVideoParams();
   }
 
+  /** True when the selected ICE pair runs through our TURN allocation. */
+  async isRelayed(): Promise<boolean> {
+    try {
+      const stats = await this.pc.getStats();
+      let pairId: string | undefined;
+      stats.forEach((r) => {
+        const rep = r as { type?: string; selectedCandidatePairId?: string };
+        if (rep.type === 'transport' && rep.selectedCandidatePairId) pairId = rep.selectedCandidatePairId;
+      });
+      let localId: string | undefined;
+      stats.forEach((r) => {
+        const rep = r as {
+          id?: string;
+          type?: string;
+          nominated?: boolean;
+          state?: string;
+          localCandidateId?: string;
+        };
+        if (rep.type !== 'candidate-pair') return;
+        // Firefox has no transport.selectedCandidatePairId: fall back to the nominated pair.
+        if (pairId ? rep.id === pairId : rep.nominated && rep.state === 'succeeded') {
+          localId = rep.localCandidateId;
+        }
+      });
+      if (!localId) return false;
+      const local = stats.get(localId) as { candidateType?: string } | undefined;
+      return local?.candidateType === 'relay';
+    } catch {
+      return false;
+    }
+  }
+
   /** Inbound loss + RTT → coarse quality for UI signal bars. */
   async sampleConnectionQuality(
     thresholds?: Required<KapiConnectionQualityThresholds>,

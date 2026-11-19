@@ -78,4 +78,12 @@ export type {
   KapiLayout,
   KapiUiTheme,
   KapiUiLabels,
+  KapiTopology,
+  SfuAdapter,
+  SfuPublication,
+  SfuSessionDescription,
+  SfuSource,
+  SfuTrackInfo,
+  SfuTrackObject,
+  SfuTracksResponse,
 } from './types';

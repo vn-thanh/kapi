@@ -71,6 +71,12 @@ All options for `KapiRoom.join` and `mount` (UI extends room options).
                              // (F5, tab close) so peers drop you instantly instead
                              // of after ICE timeouts. Adapter send must be
                              // unload-safe (keepalive fetch / BroadcastChannel / WS).
+  sfu?: SfuAdapter           // media server for rooms that outgrow the mesh — see
+                             // docs/SIGNALING.md "SFU rooms". With it, `join`
+                             // advertises caps.sfu and the room follows the relay's
+                             // `mode: 'sfu'` (publish once, pull everyone, simulcast)
+  aloneTimeoutMs?: number    // hang up after this long alone in the room (fires
+                             // `alone-timeout` first). Default off
 }
 ```
 
@@ -216,8 +222,12 @@ picker remains a quick shortcut and writes the same store.
 | `local-stream` | `{ stream }` | Local preview source; re-emitted on screen share, background, device switch |
 | `reaction` | `{ peerId, emoji }` | Emoji reaction — fired for remote arrivals AND for the local one sent via `room.sendReaction(emoji)`; the built-in UI floats it up the screen Jitsi-style |
 | `media-state` | `{ peerId, sharing, mic?, cam?, shareAudio? }` | Mic / camera / screen-share toggled — fired locally by `setMic` / `setCam` / `shareScreen` and for remote peers via the `media-state` signal message. `shareAudio` is true when the active share includes tab/system audio. `mic` / `cam` / `shareAudio` may be omitted by older senders (`true` = on). The built-in UI shows a mute chip on the tile (and in the participant list), a ♪ chip when share audio is on, and promotes the sharer's tile to a full-width stage with uncropped (`contain`) video |
-| `error` | `{ error }` | Recoverable errors (ICE exhausted, maxPeers, …) |
+| `error` | `{ error }` | Recoverable errors (ICE exhausted, maxPeers, SFU call failed, …) |
 | `hangup` | — | Room closed |
+| `mode` | `{ mode }` | The relay moved the room to `'sfu'` (one-way). `room.mode` reads it |
+| `tracks-reset` | `{ peerId }` | That peer's media moved to a new link (mesh → SFU): drop the tracks you merged for it; its new `track` events follow. The built-in UI rebinds the tile |
+| `room-full` | `{ reason? }` | The relay refused the join (`full` message). The built-in UI shows `labels.roomFull` and leaves |
+| `alone-timeout` | — | Alone for `aloneTimeoutMs`; `hangup` follows |
 
 ### Notable methods
 

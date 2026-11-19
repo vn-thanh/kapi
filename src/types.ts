@@ -5,16 +5,99 @@ export type SignalPeer = {
   displayName?: string;
   /** Optional image URL shown on the tile / roster when video is off. */
   avatarUrl?: string;
+  /** SFU rooms: this peer's published tracks, so a joiner can pull at once. */
+  sfu?: SfuPublication;
 };
 
+/** Which local outbound slot a published SFU track carries. */
+export type SfuSource = 'audio' | 'video' | 'share-audio';
+
+export type SfuTrackInfo = { trackName: string; kind: 'audio' | 'video'; source: SfuSource };
+
+/** A peer's SFU session and the tracks it publishes there. */
+export type SfuPublication = { sessionId: string; tracks: SfuTrackInfo[] };
+
+/** Relay-chosen room topology: `mesh` (P2P) or `sfu` (media server). */
+export type KapiTopology = 'mesh' | 'sfu';
+
+export type SfuSessionDescription = { type: 'offer' | 'answer'; sdp: string };
+
+/** Track object of the Cloudflare Realtime SFU HTTPS API (all fields optional there). */
+export type SfuTrackObject = {
+  location?: 'local' | 'remote';
+  mid?: string;
+  trackName?: string;
+  /** Publisher session, for `remote` tracks. */
+  sessionId?: string;
+  simulcast?: {
+    preferredRid?: string;
+    priorityOrdering?: 'none' | 'asciibetical';
+    ridNotAvailable?: 'none' | 'asciibetical';
+  };
+  errorCode?: string;
+  errorDescription?: string;
+};
+
+export type SfuTracksResponse = {
+  requiresImmediateRenegotiation?: boolean;
+  sessionDescription?: SfuSessionDescription;
+  tracks?: SfuTrackObject[];
+};
+
+/**
+ * Host-provided access to a selective forwarding unit, shaped like the
+ * Cloudflare Realtime SFU HTTPS API so a backend proxy can forward bodies
+ * as-is. kapi never sees the SFU credentials: the host's backend holds the
+ * app secret and must authorize every call (session owner, same room).
+ */
+export interface SfuAdapter {
+  newSession(): Promise<{ sessionId: string }>;
+  newTracks(
+    sessionId: string,
+    body: { sessionDescription?: SfuSessionDescription; tracks: SfuTrackObject[] },
+  ): Promise<SfuTracksResponse>;
+  renegotiate(sessionId: string, body: { sessionDescription: SfuSessionDescription }): Promise<unknown>;
+  updateTracks(
+    sessionId: string,
+    body: { tracks: SfuTrackObject[] },
+  ): Promise<SfuTracksResponse>;
+  closeTracks(
+    sessionId: string,
+    body: { tracks: { mid: string }[]; force: boolean },
+  ): Promise<unknown>;
+}
+
 export type SignalMessage =
-  | { type: 'join'; peerId: string; displayName?: string; avatarUrl?: string }
+  | {
+      type: 'join';
+      peerId: string;
+      displayName?: string;
+      avatarUrl?: string;
+      /** What this client can do; `sfu` = it can follow a mesh → SFU upgrade. */
+      caps?: { sfu?: boolean };
+    }
   | { type: 'leave'; peerId: string }
   | { type: 'offer'; sdp: string; to: string; from?: string }
   | { type: 'answer'; sdp: string; to: string; from?: string }
   | { type: 'ice'; candidate: RTCIceCandidateInit; to: string; from?: string }
   | { type: 'reaction'; emoji: string; from?: string }
-  | { type: 'peers'; peers: SignalPeer[] }
+  /** Roster snapshot for the joiner; `mode: 'sfu'` = join straight into the SFU. */
+  | { type: 'peers'; peers: SignalPeer[]; mode?: KapiTopology }
+  /**
+   * Relay → peers: the room moved to the SFU (one-way; sent when the room
+   * outgrows the mesh). Peers publish to the SFU, pull everyone, then drop
+   * their P2P links.
+   */
+  | { type: 'mode'; mode: KapiTopology }
+  /** Relay → joiner: not admitted (room at its cap). */
+  | { type: 'full'; reason?: string }
+  /** Broadcast once published to the SFU (and on re-publish). */
+  | { type: 'sfu-tracks'; peerId: string; sessionId: string; tracks: SfuTrackInfo[]; from?: string }
+  /**
+   * Peer → relay telemetry: this peer's mesh link runs through TURN. Relays
+   * may meter it and need not forward it; receivers ignore it.
+   */
+  | { type: 'path'; relay: boolean; from?: string }
   /**
    * Live identity update after join — displayName / avatarUrl. Relays that
    * drop unknown types only lose the roster refresh; media is unaffected.
@@ -203,6 +286,18 @@ export interface KapiRoomOptions {
    * `keepalive: true`/sendBeacon for HTTP).
    */
   leaveOnUnload?: boolean;
+  /**
+   * Media server for rooms that outgrow the mesh. With it, `join` advertises
+   * `caps.sfu` and the room follows the relay's `mode: 'sfu'` (publish once,
+   * pull everyone, simulcast). Without it the room is mesh-only.
+   */
+  sfu?: SfuAdapter;
+  /**
+   * Hang up after being alone in the room this long (ms) — a forgotten call
+   * stops holding devices (and SFU egress). Fires `alone-timeout` first.
+   * Default off.
+   */
+  aloneTimeoutMs?: number;
 }
 
 export type RoomEventMap = {
@@ -239,6 +334,18 @@ export type RoomEventMap = {
   };
   error: { error: Error };
   hangup: undefined;
+  /** The relay refused this join (room at its cap). The room stays empty. */
+  'room-full': { reason?: string };
+  /** The room switched topology (mesh → SFU). */
+  mode: { mode: KapiTopology };
+  /**
+   * Drop every track previously delivered for this peer: its media now comes
+   * over a new transport (mesh → SFU). `track` events for the new tracks
+   * follow immediately.
+   */
+  'tracks-reset': { peerId: string };
+  /** Nobody else was in the room for `aloneTimeoutMs`; the room hangs up next. */
+  'alone-timeout': undefined;
 };
 
 export type RoomEvent = keyof RoomEventMap;
@@ -342,6 +449,8 @@ export interface KapiUiLabels {
   connectionPoor?: string;
   connectionLost?: string;
   connectionUnknown?: string;
+  /** Toast when the relay refuses the join (room at its cap). */
+  roomFull?: string;
 }
 
 export interface KapiMountOptions extends KapiRoomOptions {

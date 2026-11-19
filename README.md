@@ -319,7 +319,7 @@ io.on('connection', (socket) => {
 ## 🧪 Browser support & limits
 
 - Evergreen **Chrome, Edge, Firefox, Safari** — camera/mic need a **secure context** (HTTPS or `localhost`)
-- **Mesh topology** → each peer uploads to every other peer; keep rooms small (`maxPeers` caps it)
+- **Mesh topology** → each peer uploads to every other peer; keep rooms small (`maxPeers` caps it), or pass an `sfu` adapter and let your relay upgrade big rooms to a media server (Cloudflare Realtime SFU shapes, simulcast) — see [docs/SIGNALING.md](docs/SIGNALING.md#sfu-rooms-optional)
 - Background effects need WebGL/GPU and a one-time model download
 - Strict corporate NATs may need your own TURN server (the demo ships with a public TURN for convenience only)
 

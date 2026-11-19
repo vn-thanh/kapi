@@ -116,6 +116,7 @@ export const DEFAULT_LABELS: Required<KapiUiLabels> = {
   connectionPoor: 'Poor connection',
   connectionLost: 'Connection lost',
   connectionUnknown: 'Connecting…',
+  roomFull: 'This call is full',
 };
 
 export type ResolvedConnectionQuality = {

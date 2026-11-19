@@ -73,3 +73,46 @@ loses the optimization, and older receivers ignore it entirely.
 Use `@vn-thanh/kapi` headless (`KapiRoom`) or `@vn-thanh/kapi/ui` (`mount`). Pass `iceServers` including TURN for production NAT.
 
 Built-in helpers for demos only: `createBroadcastSignalAdapter`, `createLocalSignalBus`.
+
+## SFU rooms (optional)
+
+A mesh costs every peer one upload per other peer, so past ~5 people a room
+should move to a selective forwarding unit. kapi follows the relay: pass
+`sfu` (an `SfuAdapter`) and the relay decides when.
+
+```ts
+type SignalMessage =
+  // …the mesh messages above, plus:
+  | { type: 'join'; …; caps?: { sfu?: boolean } }          // client can do SFU
+  | { type: 'peers'; peers: SignalPeer[]; mode?: 'mesh' | 'sfu' } // SignalPeer.sfu?: { sessionId, tracks }
+  | { type: 'mode'; mode: 'sfu' }                          // relay → peers, one-way
+  | { type: 'full'; reason?: string }                      // relay → refused joiner
+  | { type: 'sfu-tracks'; peerId: string; sessionId: string; tracks: SfuTrackInfo[] }
+  | { type: 'path'; relay: boolean }                       // peer → relay telemetry only
+```
+
+Relay rules on top of the mesh ones:
+
+1. **Pick the moment.** When a `join` would push a mesh room past its cap and
+   every peer (the joiner included) sent `caps.sfu`, store the room as `sfu`,
+   send `{ type: 'mode', mode: 'sfu' }` to the current peers, and include
+   `mode: 'sfu'` in the joiner's `peers`. Otherwise answer the joiner with
+   `full` and do not admit it. Never go back to mesh while peers remain.
+2. **Remember publications.** Keep each peer's latest `sfu-tracks` and put it
+   in `peers[].sfu`, so a joiner pulls without waiting for a re-announce.
+3. **Forward** `sfu-tracks` like `media-state`. `path` is for the relay
+   (metering TURN use) — no need to forward it.
+
+What peers do: on `mode: 'sfu'` each one publishes its three slots (`audio`,
+`video` with `f`/`h`/`q` simulcast, `share-audio`) on one SFU connection and
+announces them with `sfu-tracks`; everyone pulls everyone. Existing P2P links
+stay up until that peer's SFU media arrives (or 5s), then close without a
+`peer-left` — the UI gets `tracks-reset` and the new tracks. `video-hint`
+picks a simulcast layer instead of a sender rung.
+
+`SfuAdapter` mirrors the Cloudflare Realtime SFU HTTPS API
+(`sessions/new`, `tracks/new`, `renegotiate`, `tracks/update`,
+`tracks/close`), so a backend can forward bodies unchanged. **Keep the SFU
+secret on your backend and authorize every call**: the session belongs to
+the caller, and every `remote` track's `sessionId` belongs to the same room —
+the SFU itself lets any session pull any track in the app.
