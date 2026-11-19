@@ -18,21 +18,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 * re-acquire mic/cam after hot-plug mid-meeting ([d2cff81](https://github.com/vn-thanh/kapi/commit/d2cff81c3565369b3bba2444ed492db390aee890))
 * **ui:** harden mobile layout and viewport handling ([5e12a09](https://github.com/vn-thanh/kapi/commit/5e12a09e99839edeab3986a48dbeef05a1a0df35))
 
-## [Unreleased]
-
-### Added
-
-- **Mirror my video** — `mirror` mount option (default `true`) and Settings → Video toggle; remembered in preferences. Local camera preview only (screen shares stay unflipped).
-- **Mic processing toggles** — Settings → Audio: noise suppression, echo cancellation, auto gain. Persisted; merged into join constraints when the host has not already set those keys on `media.audio`.
-- **Device adaptation** — proactive capture / effect presets from `deviceMemory`, CPU cores, Network Information (`saveData` / `effectiveType`), and mobile-like UA. Default on (`deviceAdaptation`); picks 720p / 540p / 360p capture ceilings, starting adaptive rungs, effect fps, and a soft `maxBitrate` on weak tiers before the first frame. Complements reactive `adaptive` encoder stepping. Helpers: `detectDeviceCapabilities`, `resolveDeviceAdaptation`; room exposes `deviceAdaptation`.
-- **Demo invite link** — lobby **Copy invite link** copies a shareable URL with the current room id (recipient picks their own name).
-
-### Changed
-
-- **Settings Escape / `aria-modal`** — Escape closes the settings dialog and participants pane; settings uses `aria-modal="true"`.
-- **Mobile safe-area** — toolbar and toast respect `env(safe-area-inset-*)` so home-indicator devices do not cover mute / hangup.
-- **Screen-share UX** — Share dims when `getDisplayMedia` is missing; permission denials use a friendly toast; dismissing the share picker no longer surfaces an error.
-- **Mobile layout** — sidebar view collapses to a bottom filmstrip under ~720px mount width (container query); demo uses `100dvh` + `visualViewport` height; touch hover sticky styles are neutralized; background effects stay off on `deviceAdaptation` tier `low`.
 ## [1.3.0](https://github.com/vn-thanh/kapi/compare/v1.2.0...v1.3.0) (2026-09-06)
 
 ### Added

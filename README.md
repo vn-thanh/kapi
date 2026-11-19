@@ -158,6 +158,7 @@ await room.hangup()
 | `setBackground(mode)` | `'none'` \| `'blur'` \| `'remove'` \| `{ image: url }` — swaps the processed track live |
 | `switchDevice(kind, deviceId)` | Switch mic (`audioinput`) or camera (`videoinput`) mid-call |
 | `sendReaction(emoji)` | Broadcast an emoji reaction |
+| `setIdentity({ displayName?, avatarUrl? })` | Change your name / avatar mid-call (broadcasts `peer-meta`; `avatarUrl: ''` clears it) |
 | `hangup()` | Leave cleanly: notifies peers, closes all connections |
 
 ### Room events (`room.on(event, handler)`)
@@ -166,6 +167,7 @@ await room.hangup()
 |---|---|---|
 | `peer-joined` | `{ peerId, displayName?, avatarUrl? }` | Adding a tile / roster entry |
 | `peer-left` | `{ peerId }` | Removing a tile |
+| `peer-meta` | `{ peerId, displayName?, avatarUrl? }` | Live name / avatar change (`setIdentity` or a remote one) |
 | `track` | `{ peerId, track, streams }` | Rendering remote media |
 | `peer-state` | `{ peerId, state }` | Connection status badges |
 | `connection-quality` | `{ peerId, quality }` | Signal bars (`excellent` / `good` / `poor` / `lost` / `unknown`) |
@@ -251,7 +253,8 @@ type SignalMessage =
   | { type: 'ice'; candidate: RTCIceCandidateInit; to: string; from?: string }
   | { type: 'reaction'; emoji: string; from?: string }
   | { type: 'peers'; peers: { peerId: string; displayName?: string; avatarUrl?: string }[] }
-  | { type: 'media-state'; peerId: string; sharing: boolean; mic?: boolean; cam?: boolean; to?: string }
+  | { type: 'peer-meta'; peerId: string; displayName?: string; avatarUrl?: string; to?: string }
+  | { type: 'media-state'; peerId: string; sharing: boolean; mic?: boolean; cam?: boolean; shareAudio?: boolean; to?: string }
   | { type: 'video-hint'; to: string; width: number; height: number; from?: string }
 ```
 
