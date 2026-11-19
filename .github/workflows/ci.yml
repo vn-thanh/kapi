@@ -16,3 +16,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      # Signaling + negotiation + (when a cached chromium exists) UI layout.
+      # Without this step a stale check script ships broken to `npm run release`.
+      - run: npm run self-check

@@ -16,7 +16,8 @@
       "types": "./dist/ui/index.d.ts",
       "import": "./dist/ui/index.js"
     },
-    "./background.worker.js": "./dist/background.worker.js"
+    "./background.worker.js": "./dist/background.worker.js",
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
@@ -58,7 +59,7 @@
   ],
   "scripts": {
     "build": "tsup",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "npm run check",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check": "npm run typecheck && npm run build",
     "self-check": "npm run build && node examples/self-check.mjs && node examples/negotiation-check.mjs && node examples/ui-layout-check.mjs",
