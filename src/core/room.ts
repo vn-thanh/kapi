@@ -262,13 +262,19 @@ export class KapiRoom {
     meta?: Pick<SignalPeer, 'displayName' | 'avatarUrl'> & { avatarUrl?: string },
   ): SignalPeer {
     const prev = this.peerMeta.get(remoteId);
+    // Relays are untrusted input, so coerce instead of trusting the types: a
+    // single non-string avatarUrl used to throw out of the `peers` loop and
+    // skip every remaining peer in the roster — and those peers never connect,
+    // because existing peers treat `join` as presence only.
     const next: SignalPeer = {
       peerId: remoteId,
       displayName:
-        meta?.displayName !== undefined ? meta.displayName : prev?.displayName,
+        typeof meta?.displayName === 'string' ? meta.displayName : prev?.displayName,
       avatarUrl:
         meta && 'avatarUrl' in meta
-          ? meta.avatarUrl?.trim() || undefined
+          ? typeof meta.avatarUrl === 'string'
+            ? meta.avatarUrl.trim() || undefined
+            : prev?.avatarUrl
           : prev?.avatarUrl,
     };
     this.peerMeta.set(remoteId, next);
@@ -335,6 +341,10 @@ export class KapiRoom {
           // Do not tear down on first failure — previously a single hiccup
           // permanently killed the link (remote kept a frozen tile, this side
           // lost the peer entirely). Try ICE restart first.
+          // Cancel the pending `disconnected` timer: it re-checks for
+          // failed/disconnected and would spend a SECOND restart on the same
+          // outage, burning the budget and removing the peer a drop early.
+          this.clearRestartTimer(remoteId);
           void this.restartIce(remoteId);
         } else if (state === 'closed') {
           this.removePeer(remoteId);
@@ -359,6 +369,10 @@ export class KapiRoom {
     });
 
     if (this.localStream) await peer.addLocalTracks(this.localStream);
+    // Peers created while a share is already running must know: otherwise the
+    // screen is announced as camera video and encoded with the camera rung
+    // (up to 4× downscale) while the adaptive ticker keeps stepping it down.
+    peer.setScreenSharing(!!this.screenStream);
     // Late joiners while we are already sharing: attach tab/system audio too.
     const shareAudio = this.screenShareAudioTrack();
     if (shareAudio) await peer.setShareAudioTrack(shareAudio);
@@ -478,7 +492,7 @@ export class KapiRoom {
     try {
       switch (msg.type) {
         case 'join':
-          if (msg.peerId === this.options.peerId) return;
+          if (typeof msg.peerId !== 'string' || msg.peerId === this.options.peerId) return;
           // A join from an id we already have means the remote instance
           // restarted (F5/crash) and its `leave` never reached us — tear down
           // the stale link first so the fresh offer lands on a clean
@@ -496,7 +510,9 @@ export class KapiRoom {
           this.removePeer(msg.peerId);
           break;
         case 'peers':
+          if (!Array.isArray(msg.peers)) return;
           for (const p of msg.peers) {
+            if (!p || typeof p.peerId !== 'string') continue;
             if (p.peerId === this.options.peerId) continue;
             await this.ensurePeer(p.peerId, {
               displayName: p.displayName,
@@ -1087,14 +1103,24 @@ export class KapiRoom {
     if (mode === 'none') {
       this.background?.stop();
       this.background = null;
-      this.localStream = this.rawCameraStream;
-      const v = this.rawCameraStream.getVideoTracks()[0] ?? null;
-      if (!this.screenStream && this.camEnabled) await this.replaceVideoTrack(v);
-      else if (!this.screenStream && !this.camEnabled) await this.replaceVideoTrack(null);
-      this.applyCamState();
-      this.emit('local-stream', { stream: this.localStream });
+      // While screen sharing, localStream IS the share preview peers receive —
+      // repointing it at the camera (or at an empty stream when the camera is
+      // off) made the local tile show something other than what is sent.
+      if (!this.screenStream) {
+        this.localStream = this.rawCameraStream;
+        const v = this.rawCameraStream.getVideoTracks()[0] ?? null;
+        await this.replaceVideoTrack(this.camEnabled ? v : null);
+        this.applyCamState();
+        this.emit('local-stream', { stream: this.localStream });
+      }
       return;
     }
+
+    // Sharing: the outbound video is the screen, so there is nothing to
+    // composite the effect onto. Keep the mode — restoreCameraTrack re-applies
+    // it when the share ends — and skip paying for MediaPipe on a camera
+    // nobody can see.
+    if (this.screenStream) return;
 
     // Prefer a Worker for MediaPipe when available; falls back to main thread.
     if (!this.background) {
@@ -1165,6 +1191,11 @@ export class KapiRoom {
       const track = stream.getAudioTracks()[0];
       if (!track) return;
       this.preferredAudioDeviceId = deviceId;
+      // Mute BEFORE attaching: a fresh getUserMedia track is enabled, and
+      // replaceTrack puts it on the wire immediately — a muted user would
+      // transmit live audio for the whole renegotiation (and stay hot if the
+      // loop below aborts).
+      track.enabled = this.micEnabled;
       for (const [id, peer] of this.peers) {
         if (await peer.replaceTrack('audio', track)) await this.negotiate(id);
       }
@@ -1184,7 +1215,6 @@ export class KapiRoom {
         }
         if (!target.getAudioTracks().includes(track)) target.addTrack(track);
       }
-      track.enabled = this.micEnabled;
       if (this.localStream) this.emit('local-stream', { stream: this.localStream });
       return;
     }
