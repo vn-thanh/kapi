@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project is maintained by [release-please](https://github.com/googleapis/release-please) — future entries are generated automatically from Conventional Commits.
 
+## [1.5.0](https://github.com/vn-thanh/kapi/compare/v1.4.0...v1.5.0) (2026-11-19)
+
+
+### Features
+
+* optional SFU transport with an automatic mesh to SFU switch ([2fcd6c8](https://github.com/vn-thanh/kapi/commit/2fcd6c856f2b7ed5210a670181b27f6488a04005))
+
+
+### Bug Fixes
+
+* keep mic and share audio on separate senders, drain glare ICE first ([7241036](https://github.com/vn-thanh/kapi/commit/72410362e8d9ac5c35a25b5cf48f95ebef3aec33))
+* mute a switched mic before sending and harden room signaling ([537d4e4](https://github.com/vn-thanh/kapi/commit/537d4e44d4d3770b78010000845db85d53432847))
+* **ui:** keep screen shares uncropped and skip onHangup when join fails ([86de1fd](https://github.com/vn-thanh/kapi/commit/86de1fd5097e0b5b6dedd0363ae97f7fa2af1155))
+
 ## [1.4.0](https://github.com/vn-thanh/kapi/compare/v1.3.0...v1.4.0) (2026-09-06)
 
 
